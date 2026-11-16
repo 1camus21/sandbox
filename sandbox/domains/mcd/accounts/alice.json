@@ -1,0 +1,40 @@
+{
+  "accountId": "alice",
+  "displayName": "沙箱用户",
+  "addresses": [
+    {
+      "addressId": "1000000000000000000000000001",
+      "tag": "公司",
+      "contactName": "沙箱用户",
+      "phone": "100****0001",
+      "fullAddress": "深圳市沙箱测试区示例路1号 A座 101（公司，模拟地址）",
+      "zone": "zone-a"
+    },
+    {
+      "addressId": "1000000000000000000000000002",
+      "tag": "家",
+      "contactName": "沙箱用户",
+      "phone": "100****0002",
+      "fullAddress": "深圳市沙箱测试区示例路2号 B座 202（家，模拟地址）",
+      "zone": "zone-b"
+    }
+  ],
+  "coupons": [
+    {
+      "instanceId": "c-001",
+      "couponId": "sandbox-lunch",
+      "couponCode": "SANDBOX5",
+      "title": "麦辣鸡腿汉堡套餐立减5元",
+      "appliesTo": ["100102"],
+      "discountFen": 500,
+      "validFrom": "10:00",
+      "validTo": "21:00",
+      "usedByOrderId": null
+    }
+  ],
+  "orders": [],
+  "quotes": [],
+  "invalidCoupons": [],
+  "points": 0,
+  "preferences": {}
+}

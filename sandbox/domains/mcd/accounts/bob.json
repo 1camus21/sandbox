@@ -1,0 +1,28 @@
+{
+  "accountId": "bob",
+  "displayName": "沙箱用户B",
+  "addresses": [
+    {
+      "addressId": "1000000000000000000000000011",
+      "tag": "公司",
+      "contactName": "沙箱用户B",
+      "phone": "100****0011",
+      "fullAddress": "深圳市沙箱测试区示例路5号 C座 301（公司，模拟地址）",
+      "zone": "zone-a"
+    },
+    {
+      "addressId": "1000000000000000000000000012",
+      "tag": "仓库",
+      "contactName": "沙箱用户B",
+      "phone": "100****0012",
+      "fullAddress": "深圳市沙箱测试区外部路9号（无门店覆盖，模拟地址）",
+      "zone": "zone-z"
+    }
+  ],
+  "coupons": [],
+  "orders": [],
+  "quotes": [],
+  "invalidCoupons": [],
+  "points": 0,
+  "preferences": {}
+}

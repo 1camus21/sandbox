@@ -56,7 +56,8 @@ class Sandbox:
         episode_id = episode_id or uuid4().hex
         payload = {
             "episodeId": episode_id,
-            "token": self.token, "domain": "mcd", "scene": "lunch", "seed": seed,
+            "token": self.token, "domain": "mcd", "scene": scenario.get("scene", "lunch"),
+            "account": scenario.get("account", "alice"), "seed": seed,
             "faults": scenario.get("faults", []),
         }
         for attempt in range(2):

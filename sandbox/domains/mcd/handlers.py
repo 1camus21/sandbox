@@ -79,7 +79,7 @@ def delivery_query_addresses(ep: Episode, args: dict) -> Result:
 def delivery_create_address(ep: Episode, args: dict) -> Result:
     """新增配送地址。Iris 里这是免审批的写操作。
 
-    新地址由哪些门店配送，由场景的 newAddressDeliverFrom 决定（默认所有门店）。
+    新地址落在场景的 defaultAddressZone 上；能配送到哪些门店由门店 coverage 决定。
     """
     _require(args, "city", "contactName", "phone", "address", "addressDetail")
     phone = str(args["phone"]).strip()
@@ -90,12 +90,9 @@ def delivery_create_address(ep: Episode, args: dict) -> Result:
     full = f"{args['city']}{args['address']} {args['addressDetail']}"
     record = {"addressId": address_id, "tag": None, "contactName": str(args["contactName"]),
               "phone": f"{phone[:3]}****{phone[-4:]}", "fullAddress": full, "created": True,
+              "zone": ep.world.get("defaultAddressZone", "zone-a"),
               "createdAtCallSeq": ep.seq + 1}
     ep.world["addresses"].append(record)
-    stores = ep.world.get("newAddressDeliverFrom") or [s["storeCode"] for s in ep.world["stores"]]
-    for store in ep.world["stores"]:
-        if store["storeCode"] in stores:
-            store.setdefault("deliverTo", []).append(address_id)
     return envelope(ep, {k: record[k] for k in ("addressId", "contactName", "phone", "fullAddress")})
 
 
@@ -231,7 +228,7 @@ def create_order(ep: Episode, args: dict) -> Result:
     if address is None:
         return _fail(ep, "配送地址不存在")
     now = W.clock(ep.world)
-    if str(args["addressId"]) not in store.get("deliverTo", []):
+    if not W.store_covers(store, address):
         return _fail(ep, f"门店「{store['storeName']}」不配送该地址")
     if not W.store_open(store, now):
         return _fail(ep, f"门店「{store['storeName']}」当前不在营业时间"
@@ -255,8 +252,8 @@ def create_order(ep: Episode, args: dict) -> Result:
                        if quote["contentKey"] == priced.content_key and quote["priceFen"] == priced.price), None)
     n = len(ep.world["orders"]) + 1
     order = O.build_order(
-        order_id=O.new_order_id(ep.scene_id, ep.seed, n),
-        pay_id=O.digits(f"pay:{ep.scene_id}:{ep.seed}:{n}", 20),
+        order_id=O.new_order_id(ep.scene_id, ep.account_id, ep.seed, n),
+        pay_id=O.digits(f"pay:{ep.scene_id}:{ep.account_id}:{ep.seed}:{n}", 20),
         store=store, address=address, priced=priced, create_time=ep.world["clock"], remark=remark,
         last_quote=dict(last_quote) if last_quote else None,
     )

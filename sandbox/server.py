@@ -40,6 +40,7 @@ class OpenEpisode(BaseModel):
     episodeId: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     domain: str = "mcd"
     scene: str = "lunch"
+    account: str = Field(default="alice", pattern=r"^[a-z0-9_-]{1,32}$")
     seed: int = 0
     faults: list[Fault] = Field(default_factory=list)
 
@@ -202,10 +203,12 @@ def create_app(*, admin_token: str | None = None, domains: list[Domain] | None =
             domain = registry.get(config.domain)
             if domain is None or config.scene not in domain.scenes():
                 raise ValueError("unknown domain or scene")
+            if config.account not in domain.accounts():
+                raise ValueError("unknown account")
             if compare_digest(config.token, admin_token):
                 raise ValueError("episode and admin tokens must differ")
             episode_id, created = store.create(config.token, domain, config.scene, config.seed, config.faults,
-                                               config.episodeId)
+                                               config.episodeId, config.account)
         except ValidationError as error:
             return JSONResponse({"errors": error.errors(include_input=False, include_context=False)}, status_code=400)
         except ValueError as error:
