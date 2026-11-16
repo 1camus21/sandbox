@@ -1,0 +1,32 @@
+taskId: clarify-drink
+version: 1
+capability: clarification
+env:
+  scene: lunch
+  account: alice
+  seed: 0
+faults: []
+script:
+  prompt: |
+    请用麦乐送帮我下单一份巨无霸三件套，饮料想换一种，请先问我选什么，等我回答后再算价和发起审批。
+    送到已有的公司地址。先查询门店和菜单，算出含配送费和打包费的总价，60 元内请发起下单审批。
+    请用「总价：…元」报告金额。同一笔订单只提交一次审批。
+    不用新增地址，不使用优惠券，也不要付款。
+  approve: true
+  expectApproval: true
+  budgetFen: 6000
+  quoteAfterInteraction: true
+  quoteItems:
+    - productCode: "100101"
+      quantity: 1
+      roundList:
+        - round: "3"
+          comboItemList:
+            - {code: "100203", quantity: 1}
+  interactions:
+    - actionId: provide_drink_preference
+      intentIds: [request_meal_preference]
+      reply: 饮料换成中杯鲜萃咖啡，其余按默认搭配。
+expect:
+  orders: 1
+  checks: [reported_order, scripted_interactions]

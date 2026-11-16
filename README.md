@@ -57,7 +57,7 @@ With Sandbox and Iris running, start the runner from the Sandbox repository. If 
 python -m runner order --iris http://127.0.0.1:8080/api
 ```
 
-Each invocation runs one scenario. To run another scenario, create a fresh ID and token and restart Iris with those values. Iris caches the MCP client configuration for its process. The Runner retries an ambiguous episode-open response using the same ID. It writes `evidence.json` and `events.jsonl` under `runs/<batch>/<scenario>/` and exits nonzero for a failed or unavailable verdict.
+Each invocation runs one task. Tasks live in `tasks/*.yaml`: each file declares the environment (`scene`, `account`, `seed`), the fault plan, the script, and the expected checks, so adding a task does not require code changes. Use `--task` to pick one, or `--tasks-dir` to load a different directory; `--seed` overrides the seed in the task file. To run another task, create a fresh ID and token and restart Iris with those values. Iris caches the MCP client configuration for its process. The Runner retries an ambiguous episode-open response using the same ID. It writes `evidence.json`, `events.jsonl`, and `summary.json` under `runs/<batch>/01-<task>/` and exits nonzero for a failed or unavailable verdict.
 
 The timeout scenarios verify the injected response, the order state and Iris ledger, a read-only lookup after the timeout, and the user-visible conclusion. Evidence groups lookups by whether they started before the timeout, after the timeout without a user prompt, or after the scripted follow-up. A prompted lookup can satisfy the scenario and is recorded separately from autonomous recovery. The verdict also checks explicit amount, payment, and delivery claims. Provide `--iris-revision` to record the build revision alongside the observed model names, scenario settings, and trace limitations.
 
@@ -69,7 +69,7 @@ Use a dedicated local PostgreSQL database with pgvector, a local Redis instance,
 python -m runner.regression
 ```
 
-Pass scenario names such as `timeout-before clarify-address` to run a subset. The full suite runs quote, order, denial, budget, both timeout variants, and both clarification scenarios. The clarification cases use Monitor active mode. The command builds Iris once, starts Sandbox on a loopback port, and runs each scenario in a fresh Iris process with its own MCP credentials. It generates the admin token, episode IDs, and MCP tokens and shuts down the processes it starts. To override the configured checkout for a run, pass `--iris-repo /path/to/Iris`.
+Pass task names such as `timeout-before clarify-address` to run a subset. The full suite runs quote, order, denial, budget, both timeout variants, and both clarification scenarios. The clarification cases use Monitor active mode. The command builds Iris once, starts Sandbox on a loopback port, and runs each scenario in a fresh Iris process with its own MCP credentials. It generates the admin token, episode IDs, and MCP tokens and shuts down the processes it starts. To override the configured checkout for a run, pass `--iris-repo /path/to/Iris`.
 
 The batch `summary.json` links to each case's evidence and lists the verdict and failed checks. The per-case `summary.json` shows the initial query, Iris replies observed by Monitor, matched intents and their evidence, the actual scripted follow-ups, and the final reply. A missing Iris trace is listed under diagnostics. A missing Iris ledger or verified Sandbox snapshot makes the verdict unavailable. Run artifacts and server logs are stored under `runs/regression/` unless overridden with `--out`.
 
@@ -90,8 +90,8 @@ python -m runner clarify-address --monitor active
 Each decision links its exact model input and recognition result to the Iris message and the actual user reply in `evidence.json`. Replay the recorded decision locally or ask Qwen to classify the captured input again.
 
 ```sh
-python -m monitor runs/<batch>/<scenario>/evidence.json
-python -m monitor runs/<batch>/<scenario>/evidence.json --reclassify
+python -m monitor runs/<batch>/01-<task>/evidence.json
+python -m monitor runs/<batch>/01-<task>/evidence.json --reclassify
 ```
 
 ## Manage episodes and export traces

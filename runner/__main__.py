@@ -14,7 +14,7 @@ from monitor.qwen import QwenRecognizer, api_key, model_client
 from runner.clients import Iris, Sandbox
 from runner.episode import run_episode
 from runner.report import save_report, summarize
-from runner.scenarios import SCENARIOS
+from runner.tasks import TASKS_DIR, TaskSpec, load_tasks
 from sandbox.config import load_local_env
 from sandbox.storage import write_atomic
 
@@ -40,8 +40,8 @@ def source_revision() -> dict | None:
         return None
 
 
-def run_case(scenario: str, *, iris_url: str, sandbox_url: str, admin_token: str, mcp_token: str,
-             episode_id: str | None, seed: int, monitor_mode: str, key: str) -> dict:
+def run_case(task: TaskSpec, *, iris_url: str, sandbox_url: str, admin_token: str, mcp_token: str,
+             episode_id: str | None, seed: int | None, monitor_mode: str, key: str) -> dict:
     with (
         httpx.Client(base_url=iris_url.rstrip("/"), timeout=httpx.Timeout(10, read=300), trust_env=False) as iris_http,
         httpx.Client(base_url=sandbox_url.rstrip("/") + "/admin", timeout=10, trust_env=False,
@@ -50,17 +50,18 @@ def run_case(scenario: str, *, iris_url: str, sandbox_url: str, admin_token: str
     ):
         iris, sandbox = Iris(iris_http), Sandbox(sandbox_http, mcp_token)
         recognizer = QwenRecognizer(monitor_http) if monitor_http is not None else None
-        return run_episode(scenario, iris, sandbox, seed=seed, monitor_mode=monitor_mode,
+        return run_episode(task, iris, sandbox, seed=seed, monitor_mode=monitor_mode,
                            recognizer=recognizer, requested_episode_id=episode_id)
 
 
 def main() -> int:
     load_local_env()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("scenario", nargs="?", choices=SCENARIOS, default="order")
+    parser.add_argument("task", nargs="?", default="order", help="任务 id，例如 order / timeout-after")
+    parser.add_argument("--tasks-dir", type=Path, default=TASKS_DIR, help="任务 spec 目录")
     parser.add_argument("--iris", default="http://127.0.0.1:8080/api")
     parser.add_argument("--sandbox", default="http://127.0.0.1:8100")
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=None, help="覆盖任务 spec 的种子（默认取 spec）")
     parser.add_argument("--iris-revision", help="Iris build revision to include in the evidence")
     parser.add_argument("--episode-id", default=os.environ.get("SANDBOX_EPISODE_ID") or None,
                         help="preassigned episode ID (default: SANDBOX_EPISODE_ID)")
@@ -70,6 +71,9 @@ def main() -> int:
     args = parser.parse_args()
     if args.episode_id and (len(args.episode_id) != 32 or any(c not in "0123456789abcdef" for c in args.episode_id)):
         parser.error("--episode-id requires 32 lowercase hexadecimal characters")
+    tasks = load_tasks(args.tasks_dir)
+    if args.task not in tasks:
+        parser.error(f"unknown task: {args.task} (available: {', '.join(sorted(tasks))})")
     admin_token = os.environ.get("SANDBOX_ADMIN_TOKEN")
     mcp_token = os.environ.get("MCD_MCP_TOKEN")
     if not admin_token or not mcp_token:
@@ -80,14 +84,14 @@ def main() -> int:
     batch = args.out / uuid4().hex
     batch.mkdir(parents=True)
     source = source_revision()
-    evidence = run_case(args.scenario, iris_url=args.iris, sandbox_url=args.sandbox, admin_token=admin_token,
+    evidence = run_case(tasks[args.task], iris_url=args.iris, sandbox_url=args.sandbox, admin_token=admin_token,
                         mcp_token=mcp_token, episode_id=args.episode_id, seed=args.seed,
                         monitor_mode=args.monitor, key=key)
     evidence["provenance"].update(runnerSource=source, irisRevision=args.iris_revision)
-    directory = batch / f"01-{args.scenario}"
+    directory = batch / f"01-{args.task}"
     save(directory, evidence)
     verdict = evidence["verdict"]["status"]
-    print(f"{args.scenario} {verdict} {directory.resolve()}")
+    print(f"{args.task} {verdict} {directory.resolve()}")
     if evidence["status"] == "interrupted":
         return 130
     return 0 if verdict == "passed" else 1

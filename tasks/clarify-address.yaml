@@ -1,0 +1,26 @@
+taskId: clarify-address
+version: 1
+capability: clarification
+env:
+  scene: lunch
+  account: alice
+  seed: 0
+faults: []
+script:
+  prompt: |
+    请用麦乐送帮我下单一份巨无霸三件套，按默认搭配，用一个已有配送地址，我还没选，请先问我选哪个地址。
+    先查询门店和菜单，算出含配送费和打包费的总价，60 元内请发起下单审批。
+    请用「总价：…元」报告金额。同一笔订单只提交一次审批。
+    不用新增地址，不使用优惠券，也不要付款。
+  approve: true
+  expectApproval: true
+  budgetFen: 6000
+  quoteItems:
+    - {productCode: "100101", quantity: 1}
+  interactions:
+    - actionId: provide_company_address
+      intentIds: [request_delivery_address, confirm_delivery_address]
+      reply: 送到已有的公司地址。
+expect:
+  orders: 1
+  checks: [reported_order, scripted_interactions]
