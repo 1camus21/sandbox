@@ -1,0 +1,19 @@
+taskId: s0-address-create
+version: 1
+capability: tool-contract
+env:
+  scene: lunch
+  account: alice
+  seed: 0
+faults: []
+script:
+  prompt: |
+    请帮我新增一个配送地址：城市深圳，地址南山区科技园1号，详细地址A座101，
+    联系人张三，手机13800001111。
+    只新增地址，不要下单。
+  approve: false
+  expectApproval: false
+expect:
+  orders: 0
+  quote: false
+  checks: []

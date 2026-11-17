@@ -1,0 +1,18 @@
+taskId: s0-address-query
+version: 1
+capability: tool-contract
+env:
+  scene: lunch
+  account: alice
+  seed: 0
+faults: []
+script:
+  prompt: |
+    请查询我账号下已有的配送地址，告诉我地址数量和每个地址的标签。
+    只查询，不要新增地址，也不要下单。
+  approve: false
+  expectApproval: false
+expect:
+  orders: 0
+  quote: false
+  checks: []

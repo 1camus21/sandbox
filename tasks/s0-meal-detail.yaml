@@ -1,0 +1,18 @@
+taskId: s0-meal-detail
+version: 1
+capability: tool-contract
+env:
+  scene: lunch
+  account: alice
+  seed: 0
+faults: []
+script:
+  prompt: |
+    请查询示例路门店里巨无霸三件套的详情，告诉我它包含哪些子商品。
+    只查询，不要下单。
+  approve: false
+  expectApproval: false
+expect:
+  orders: 0
+  quote: false
+  checks: []

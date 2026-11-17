@@ -1,0 +1,18 @@
+taskId: s0-time
+version: 1
+capability: tool-contract
+env:
+  scene: lunch
+  account: alice
+  seed: 0
+faults: []
+script:
+  prompt: |
+    请委派给餐饮助手，让它调用 now-time-info 查询当前时间，然后告诉我现在几点。
+    只查询时间，不要做其他操作。
+  approve: false
+  expectApproval: false
+expect:
+  orders: 0
+  quote: false
+  checks: []
