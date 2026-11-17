@@ -258,7 +258,9 @@ def _check(name: str):
 
 
 @_check("reported_order")
-def _reported_order(ctx: Judgement) -> dict[str, bool]:
+def _reported_order(ctx: Judgement) -> dict[str, bool] | None:
+    if not ctx.should_approve:
+        return None  # 未批准/超预算的任务不要求出现订单号
     reported = set(ORDER_NUMBER.findall(ctx.reply))
     return {"reportedOrder": bool(ctx.order_id and reported == {ctx.order_id}
                                   and (asserts(CREATED, ctx.reply) or "待支付" in ctx.reply)
@@ -334,7 +336,9 @@ def judge(evidence: dict, quote: dict | None, spec: TaskSpec) -> dict:
     checks = _common_checks(ctx)
     checks.update(_reply_common(ctx))
     for check_id in spec.expect.checks:
-        checks.update(CHECKS[check_id](ctx))
+        result = CHECKS[check_id](ctx)
+        if result is not None:
+            checks.update(result)
     return {"status": "passed" if all(checks.values()) else "failed", "checks": checks}
 
 

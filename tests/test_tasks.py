@@ -133,6 +133,15 @@ def test_budget_check_uses_spec_budget(tasks):
     assert verdict["checks"]["quoteExceedsBudget"] is True
 
 
+def test_reported_order_is_skipped_when_not_approved(tasks):
+    spec = tasks["budget-exceeded"].model_copy(deep=True)
+    spec.expect.checks = ["reported_order"]
+    evidence = evidence_for(spec, "总价 53.9 元，超过预算，未下单")
+    verdict = judge(evidence, QUOTE, spec)
+    assert "reportedOrder" not in verdict["checks"]
+    assert verdict["status"] == "passed"
+
+
 def test_unavailable_when_evidence_incomplete(tasks):
     evidence = evidence_for(tasks["order"], f"已下单，订单号：{ORDER_ID}，待支付")
     evidence["status"] = "execution_error"
