@@ -58,6 +58,7 @@ class ExpectSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     orders: int = 0
+    quote: bool = True
     checks: list[str] = Field(default_factory=list)
 
     @field_validator("checks")
@@ -111,6 +112,7 @@ def legacy_view(spec: TaskSpec) -> dict:
         "approve": spec.script.approve,
         "expectApproval": spec.script.expectApproval,
         "orders": spec.expect.orders,
+        "quote": spec.expect.quote,
         "budgetFen": spec.script.budgetFen,
         "faults": [fault.model_dump() for fault in spec.faults],
         "interactions": [item.model_dump() for item in spec.script.interactions],

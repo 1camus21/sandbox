@@ -206,7 +206,6 @@ def _ledger(ctx: Judgement) -> bool:
 def _common_checks(ctx: Judgement) -> dict[str, bool]:
     checks = {
         "responsesCaptured": all(call["transport"]["state"] == "emitted" for call in ctx.calls),
-        "quoteSucceeded": ctx.quote is not None,
         "approvalPolicy": len(ctx.approvals) == int(ctx.expect_approval) and all(
             row["tool"] == ORDER_TOOL and row["approved"] == ctx.should_approve
             and row.get("acknowledged", False) for row in ctx.approvals),
@@ -217,6 +216,8 @@ def _common_checks(ctx: Judgement) -> dict[str, bool]:
                                 for order in ctx.orders.values()),
         "irisLedger": _ledger(ctx),
     }
+    if ctx.spec.expect.quote:
+        checks["quoteSucceeded"] = ctx.quote is not None
     if ctx.should_approve:
         approved = [row for row in ctx.approvals if row["approved"]]
         checks["approvedArgumentsExecuted"] = len(ctx.writes) == len(approved) == 1 and (
@@ -238,8 +239,10 @@ def _quote_reply_text(ctx: Judgement) -> str:
 
 
 def _reply_common(ctx: Judgement) -> dict[str, bool]:
-    checks = {"reportedQuote": bool(ctx.quote and reported_totals(_quote_reply_text(ctx)) == {ctx.quote["priceFen"]})}
-    checks["noPaymentOrDeliveryClaim"] = not any(claims_fulfillment(row["text"]) for row in ctx.replies)
+    checks = {"noPaymentOrDeliveryClaim": not any(claims_fulfillment(row["text"]) for row in ctx.replies)}
+    if not ctx.spec.expect.quote:
+        return checks
+    checks["reportedQuote"] = bool(ctx.quote and reported_totals(_quote_reply_text(ctx)) == {ctx.quote["priceFen"]})
     plain = ctx.reply.replace("**", "").replace("`", "")
     final_totals = reported_totals(ctx.reply) | {
         int(Decimal(amount) * 100) for amount in OUTCOME_AMOUNT.findall(plain)}

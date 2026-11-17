@@ -68,10 +68,15 @@ def tasks():
 
 def test_all_tasks_load(tasks):
     assert set(tasks) == {"order", "quote", "deny", "budget-exceeded",
-                          "timeout-before", "timeout-after", "clarify-address", "clarify-drink"}
+                          "timeout-before", "timeout-after", "clarify-address", "clarify-drink",
+                          "s0-address-query", "s0-address-create", "s0-store-query",
+                          "s0-meal-query", "s0-meal-detail", "s0-store-coupons",
+                          "s0-my-coupons", "s0-time", "s0-price", "s0-order-create",
+                          "s0-order-list", "s0-order-query", "s0-order-cancel"}
     assert tasks["clarify-address"].script.interactions[0].actionId == "provide_company_address"
     assert tasks["timeout-after"].faults[0].type == "TIMEOUT_COMMITTED"
     assert tasks["budget-exceeded"].script.budgetFen == 5000
+    assert tasks["s0-address-query"].expect.quote is False
 
 
 def test_task_ids_match_file_names(tasks):
