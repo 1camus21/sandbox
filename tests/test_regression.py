@@ -82,3 +82,59 @@ def test_batch_stop_preserves_started_outcomes_without_dispatching_remaining_cas
 def test_invalid_job_limits(value):
     with pytest.raises(ValueError if "." in value else ArgumentTypeError):
         positive_int(value)
+
+
+def test_workers_bind_distinct_credentials_and_publish_a_setup_exception(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from functools import partial
+    from threading import Lock
+
+    from runner import regression
+
+    launched = {}
+    capture = {}
+    lock = Lock()
+
+    @contextmanager
+    def launch(command, *, cwd, env, log, processes):
+        with lock:
+            index = len(launched) + 1
+            iris = f"http://127.0.0.1:{10000 + index}"
+            launched[iris] = (env, cwd, log)
+        assert "--spring.sql.init.mode=never" in command
+        yield iris
+
+    def run_case(task, *, iris_url, sandbox_url, mcp_token, episode_id, **kwargs):
+        env, work, log = launched[iris_url.removesuffix("/api")]
+        assert env["MCD_MCP_URL"] == f"{sandbox_url}/mcp/{episode_id}/1"
+        assert env["MCD_MCP_TOKEN"] == mcp_token
+        assert work.is_dir()
+        with lock:
+            capture[log.stem] = (episode_id, mcp_token, work)
+        if log.stem.startswith("02-"):
+            raise ValueError("controlled runtime startup error")
+        return {"provenance": {}}
+
+    def save_case(directory, evidence):
+        directory.mkdir()
+        (directory / "evidence.json").write_text("{}")
+
+    monkeypatch.setattr(regression, "running", launch)
+    monkeypatch.setattr(regression, "wait_ready", lambda iris, *args: iris)
+    monkeypatch.setattr(regression, "run_case", run_case)
+    monkeypatch.setattr(regression, "save", save_case)
+    monkeypatch.setattr(regression, "summarize", lambda evidence: {
+        "verdict": "passed", "status": "complete", "failedChecks": [], "errors": {}, "diagnostics": {},
+    })
+    cases = [Case(index, "order") for index in range(1, 4)]
+    processes, results = Processes(), []
+    collect = partial(regression.collect_case, batch=tmp_path, jar=tmp_path / "iris.jar", iris_env={},
+                      sandbox_url="http://127.0.0.1:8080", admin_token="admin", seed=0, key="",
+                      provenance={}, processes=processes)
+    collect_cases(cases, jobs=2, collect=collect, sandbox=SandboxProcess(), sandbox_log="sandbox.log",
+                  publish=results.append, processes=processes)
+    assert len(capture) == 3
+    assert all(len(set(group)) == 3 for group in zip(*capture.values()))
+    assert all(not work.exists() for _, _, work in capture.values())
+    assert {row["index"]: row["verdict"] for row in results} == {1: "passed", 2: "unavailable", 3: "passed"}
+    assert sorted(path.parent.name for path in tmp_path.glob("*/evidence.json")) == ["01-order", "03-order"]

@@ -206,7 +206,8 @@ def created_address(data, args, reply) -> bool:
         reply,
     )
     submitted = re.search(r"(?:新增|添加|保存|创建)(?:配送)?地址.{0,6}已提交|(?:新增|添加)(?:配送)?地址请求已提交"
-                          r"|已经?提交.{0,8}(?:新增|添加)(?:配送)?地址", reply)
+                          r"|(?:配送)?地址(?:新增|添加|保存|创建)请求已提交"
+                          r"|已(?:经)?提交.{0,8}(?:新增|添加)(?:配送)?地址", reply)
     if ((not added and not (submitted and ids == {data["addressId"]}))
             or re.search(r"(?:未|无法)(?:能|成功)?(?:新增|添加|保存|创建)|(?:新增|添加|保存|创建)(?:地址)?失败", reply)):
         return False

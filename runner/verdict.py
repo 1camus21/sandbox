@@ -428,7 +428,8 @@ def _approval_checks(ctx: Judgement, matches: CallMatches) -> dict[str, bool]:
         linked &= (operation.get("tool") == row["tool"] and operation.get("arguments") == row["arguments"]
                    and matches_receipt)
     return {
-        "approvalPolicy": policy and not ctx.evidence.get("recoveryRequestedApproval"),
+        "approvalPolicy": policy and not (ctx.evidence.get("recoveryRequestedApproval")
+                                          or ctx.evidence.get("approvalLimitExceeded")),
         "irisLedger": linked and len(decision_keys) == len(records) and decision_keys == ledger.keys()
                       and approved_keys | address_keys == operations.keys(),
     }
@@ -466,6 +467,7 @@ def _reply_checks(ctx: Judgement, matches: CallMatches, quote_visible: bool) -> 
         if step.tool == "calculate-price":
             checks["reportedQuote"] = quote_visible
         elif step.tool in {ORDER_TOOL, "query-order", "cancel-order"}:
+            calls = [call for call in calls if ctx.replies and completed_by(call, ctx.replies[-1]["at"])]
             statuses = order_statuses(ctx.reply)
             status = ctx.orders.get(ctx.order_id, {}).get("status")
             if step.tool == "query-order":

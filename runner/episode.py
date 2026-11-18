@@ -183,7 +183,9 @@ def run_episode(task, iris: Iris, sandbox: Sandbox, *, seed: int | None = None,
                     record_message(round_number, "iris", reply, via="confirm")
             else:
                 if pending_approvals(iris.state(scenario_user)):
-                    raise RuntimeError("Iris exceeded the approval limit")
+                    if task.expect.calls is None:
+                        raise RuntimeError("Iris exceeded the approval limit")
+                    evidence["approvalLimitExceeded"] = True
             if evidence["approvals"]:
                 break
             available_actions = [action for action in actions if action["actionId"] not in delivered_actions]

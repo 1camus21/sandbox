@@ -827,3 +827,64 @@ def test_drink_quote_before_user_choice_fails_even_if_requoted_afterwards(client
     assert evidence["verdict"]["status"] == "failed"
     assert evidence["verdict"]["checks"]["call.quote"]
     assert evidence["verdict"]["checks"]["afterInteraction.quote"] is False
+
+
+def test_address_reply_can_report_a_real_receipt_when_iris_ledger_is_unknown(client, sandbox_client):
+    class UnknownAddressLedger(FakeIris):
+        def answer(self, user_id):
+            receipt = self.call("delivery-create-address", NEW_ADDRESS)
+            self.pending[user_id] = {"taskId": "task", "content": {}}
+            self.operations[user_id] = {"address-call": {
+                "tool": "delivery-create-address", "status": "UNKNOWN", "businessId": None,
+                "arguments": NEW_ADDRESS,
+            }}
+            return (
+                f"配送地址新增请求已提交，接口返回地址 ID：{receipt['addressId']}。"
+                "手机：138****1111（已脱敏）。Iris 回执状态为 UNKNOWN，尚不能确认是否生效。"
+            )
+
+    fake = UnknownAddressLedger(client, "s0-address-create")
+    with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as iris_http:
+        evidence = run_episode(fake.name, Iris(iris_http), sandbox_client)
+    assert evidence["verdict"]["status"] == "passed", evidence["verdict"]
+    assert not evidence["approvals"] and evidence["verdict"]["checks"]["state.addresses"]
+
+
+def test_approval_limit_still_yields_a_business_failure_when_ledger_was_captured(client, sandbox_client):
+    class RepeatedCancel(FakeIris):
+        def after_create(self, user_id, order_id):
+            self.propose(user_id, "cancel-order", {"orderId": order_id, "cancelReasonCode": 1})
+
+        def handle(self, request):
+            response = super().handle(request)
+            if request.url.path == "/api/agent/confirm" and len(self.confirmations) > 1:
+                data = json.loads(request.content)
+                user = data["userId"]
+                self.propose(user, "cancel-order", {"orderId": "1234567890123456789012345678", "cancelReasonCode": 1})
+            return response
+
+    fake = RepeatedCancel(client, "s0-order-cancel")
+    with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as iris_http:
+        evidence = run_episode(fake.name, Iris(iris_http), sandbox_client)
+    assert evidence["status"] == "complete", evidence["errors"]
+    assert evidence["sandbox"]["closed"]
+    assert evidence["verdict"]["status"] == "failed"
+    assert evidence["verdict"]["checks"]["approvalPolicy"] is False
+    assert [row["approved"] for row in evidence["approvals"]] == [True, True, False, False, False, False]
+
+
+def test_order_reply_cannot_use_a_query_that_completed_after_it(client, sandbox_client):
+    from runner.tasks import load_tasks
+    from runner.verdict import judge
+
+    fake = FakeIris(client, "s0-order-query")
+    with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as iris_http:
+        evidence = run_episode(fake.name, Iris(iris_http), sandbox_client)
+    assert evidence["verdict"]["status"] == "passed"
+    query, = [call for call in evidence["sandbox"]["calls"] if call["request"]["tool"] == "query-order"]
+    query["transport"]["completedAt"] = "9999-01-01T00:00:00+00:00"
+
+    verdict = judge(evidence, None, load_tasks()[fake.name])
+    assert verdict["status"] == "failed"
+    assert verdict["checks"]["call.query"]
+    assert verdict["checks"]["reportedOrder"] is False
