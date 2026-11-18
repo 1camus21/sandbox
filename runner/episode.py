@@ -8,6 +8,7 @@ from uuid import uuid4
 import httpx
 
 from monitor import Recognizer
+from runner.assertions import CallMatches
 from runner.clients import Iris, Sandbox, pending_approvals
 from runner.contract import (
     CANARY_PROMPT, CANARY_TOOL, DEFAULT_QUOTE_ITEMS, ORDER_BUDGET_FEN, ORDER_TOOL, READ_TOOLS, RECOVERY_PROMPT,
@@ -33,19 +34,23 @@ def _task_from_view(view: dict) -> TaskSpec:
     """旧场景字典 → TaskSpec，保证既有回放与用例仍可用。"""
     return TaskSpec(
         taskId=view.get("taskId", "custom"),
+        version=view.get("version", 1),
+        capability=view.get("capability"),
         env={"scene": view.get("scene", "lunch"), "account": view.get("account", "alice"),
              "seed": view.get("seed", 0)},
         faults=view.get("faults", []),
         script={
             "prompt": view["prompt"],
-            "approve": view.get("approve", False),
-            "expectApproval": view.get("expectApproval", False),
+            "approvals": view.get("approvals", []),
+            "approve": view.get("approve", False) if "expect" not in view else False,
+            "expectApproval": view.get("expectApproval", False) if "expect" not in view else False,
             "budgetFen": view.get("budgetFen"),
             "quoteItems": view.get("quoteItems"),
-            "quoteAfterInteraction": view.get("quoteAfterInteraction", False),
+            "quoteAfterInteraction": view.get("quoteAfterInteraction", False) if "expect" not in view else False,
             "interactions": view.get("interactions", []),
         },
-        expect={"orders": view.get("orders", 0), "checks": view.get("checks", [])},
+        expect=view.get("expect", {"orders": view.get("orders", 0), "quote": view.get("quote", True),
+                                   "checks": view.get("checks", [])}),
     )
 
 
@@ -150,15 +155,27 @@ def run_episode(task, iris: Iris, sandbox: Sandbox, *, seed: int | None = None,
                 if not approvals:
                     break
                 for approval in approvals:
-                    approve = (
-                        task.script.approve
-                        and approval["tool"] == ORDER_TOOL
-                        and not any(previous["approved"] for previous in evidence["approvals"])
-                        and required_actions <= delivered_actions.keys()
-                        and matching_quote(sandbox.snapshot(episode_id, generation=generation), approval, reported_totals(reply),
-                                           quote_items, min_round=min_quote_round, budget_fen=budget_fen)
-                    )
-                    decision = {**approval, "round": round_number, "approved": approve, "at": utc_now()}
+                    at = utc_now()
+                    decision = {**approval, "round": round_number, "at": at}
+                    if task.expect.calls is not None:
+                        snapshot = sandbox.snapshot(episode_id, generation=generation)
+                        matched = CallMatches(task, snapshot, delivered_actions)
+                        step = matched.approval_step(decision, reported_totals(reply), evidence["approvals"])
+                        if step is not None:
+                            decision["step"] = step
+                        approve = step is not None and matched.approval_rules[step].approve
+                    else:
+                        approve = (
+                            task.script.approve
+                            and approval["tool"] == ORDER_TOOL
+                            and not any(previous["approved"] for previous in evidence["approvals"])
+                            and required_actions <= delivered_actions.keys()
+                            and matching_quote(
+                                sandbox.snapshot(episode_id, generation=generation), approval, reported_totals(reply),
+                                quote_items, min_round=min_quote_round, budget_fen=budget_fen,
+                            )
+                        )
+                    decision["approved"] = approve
                     evidence["approvals"].append(decision)
                     result = iris.confirm(scenario_user, approval, approve)
                     decision["acknowledged"] = True
@@ -261,7 +278,7 @@ def run_episode(task, iris: Iris, sandbox: Sandbox, *, seed: int | None = None,
     approved_store = next((str(row["arguments"].get("storeCode")) for row in evidence["approvals"]
                            if row["approved"]), None)
     quote = (last_quote(snapshot, quote_items, min_round=min_quote_round, store_code=approved_store)
-             if snapshot and evidence["status"] == "complete" else None)
+             if snapshot and evidence["status"] == "complete" and task.expect.calls is None else None)
     if task.faults and snapshot:
         evidence["recovery"] = recovery_evidence(evidence)
     evidence["verdict"] = judge(evidence, quote, task)

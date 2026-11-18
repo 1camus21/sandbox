@@ -12,6 +12,16 @@ from runner.episode import run_episode
 from runner.scenarios import RECOVERY_PROMPT, SCENARIOS
 
 
+DELIVERY = {"beType": 2, "orderType": 2, "storeCode": "100001"}
+NEW_ADDRESS = {"city": "深圳", "address": "南山区科技园1号", "addressDetail": "A座101",
+               "contactName": "张三", "phone": "13800001111"}
+
+
+def result_of(response):
+    text = response.raise_for_status().json()["result"]["content"][0]["text"]
+    return json.loads(text) if text.startswith("{") else text
+
+
 class FakeIris:
     def __init__(self, sandbox_client, name, *, route_to_sandbox=True, trace_available=True, order=ORDER):
         self.sandbox = sandbox_client
@@ -23,6 +33,60 @@ class FakeIris:
         self.pending = {}
         self.operations = {}
 
+    def call(self, name, args=None):
+        result = result_of(tool(self.sandbox, name, args))
+        return result["data"] if isinstance(result, dict) else result
+
+    def propose(self, user_id, name, args):
+        task = self.pending.setdefault(user_id, {"taskId": "task", "content": {"approvals": {}}})
+        approvals = task["content"]["approvals"]
+        key = f"call-{len(approvals) + 1}"
+        approvals[key] = {"id": f"approval-{key}", "tool": name, "arguments": args, "status": "PENDING"}
+
+    def answer(self, user_id):
+        if self.name == "s0-time":
+            return self.call("now-time-info")["formatted"]
+        if self.name == "s0-address-query":
+            addresses = self.call("delivery-query-addresses")["addresses"]
+            return f"共 {len(addresses)} 个配送地址，标签分别是公司、家。"
+        if self.name == "s0-address-create":
+            data = self.call("delivery-create-address", NEW_ADDRESS)
+            return f"已新增配送地址，编号 {data['addressId']}，电话 {data['phone']}。"
+        if self.name == "s0-store-query":
+            self.call("delivery-query-addresses")
+            return "。".join(f"{row['storeName']} {row['businessStartTime']}—{row['businessEndTime']}"
+                            for row in self.call("delivery-query-stores", {"beType": 2, "addressId": ORDER["addressId"]}))
+        if self.name == "s0-meal-query":
+            meals = self.call("query-meals", DELIVERY)["meals"]
+            return "，".join(f"{meals[code]['name']} ¥{meals[code]['currentPrice']}" for code in ("100101", "100102"))
+        if self.name == "s0-meal-detail":
+            self.call("query-meal-detail", {**DELIVERY, "code": "100101"})
+            return "包含巨无霸、中薯条和中杯可乐。"
+        if self.name == "s0-store-coupons":
+            coupons = self.call("query-store-coupons", DELIVERY)
+            return "。".join(f"{coupon['title']}，适用商品为 {coupon['products'][0]['productName']}"
+                            for coupon in coupons)
+        if self.name == "s0-my-coupons":
+            return self.call("query-my-coupons")
+        if self.name == "s0-order-list":
+            self.call("order-list")
+            return "暂无最近的订单，无进行中的订单。"
+        if self.name != "s0-price":
+            self.call("delivery-query-addresses")
+        if self.name not in {"s0-price", "s0-order-create", "s0-order-query", "s0-order-cancel"}:
+            self.call("delivery-query-stores", {"beType": 2, "addressId": ORDER["addressId"]})
+            self.call("query-meals", DELIVERY)
+        price = self.call("calculate-price", self.order)["price"]
+        if SCENARIOS[self.name]["expectApproval"]:
+            self.propose(user_id, "create-order", self.order)
+        return f"总价 {price / 100:.2f} 元。"
+
+    def after_create(self, user_id, order_id):
+        if self.name == "s0-order-query":
+            self.call("query-order", {"orderId": order_id})
+        if self.name == "s0-order-cancel":
+            self.propose(user_id, "cancel-order", {"orderId": order_id, "cancelReasonCode": "1"})
+
     def handle(self, request):
         path = request.url.path
         if path == "/api/chat":
@@ -30,40 +94,44 @@ class FakeIris:
             user_id = data["userId"]
             if "-preflight-" in user_id:
                 if self.route_to_sandbox:
-                    tool(self.sandbox, "delivery-query-addresses").raise_for_status()
+                    self.call("delivery-query-addresses")
                 return httpx.Response(200, text="有一个公司地址。")
             if data["prompt"] == RECOVERY_PROMPT:
                 return self.recover()
-            result = tool(self.sandbox, "calculate-price", self.order).raise_for_status().json()
-            price = json.loads(result["result"]["content"][0]["text"])["data"]["price"]
-            if SCENARIOS[self.name]["expectApproval"]:
-                self.pending[user_id] = {
-                    "taskId": "task",
-                    "content": {"approvals": {"iris-call-id": {
-                        "id": "approval", "tool": "create-order", "arguments": self.order, "status": "PENDING",
-                    }}},
-                }
-            return httpx.Response(200, text=f"总价 {price / 100:.2f} 元。")
+            return httpx.Response(200, text=self.answer(user_id))
         if path == "/api/agent/state":
             user_id = request.url.params["userId"]
             task = self.pending.get(user_id)
-            if user_id in self.operations:
-                task = {"taskId": "task", "content": {"operations": {"iris-call-id": self.operations[user_id]}}}
+            if task:
+                task["content"]["operations"] = self.operations.get(user_id, {})
             return httpx.Response(200, json={"tasks": [task] if task else []})
         if path == "/api/agent/confirm":
             data = json.loads(request.content)
             self.confirmations.append(data)
-            del self.pending[data["userId"]]
-            if data["approved"]:
-                result = tool(self.sandbox, "create-order", self.order)
-                operation = {"tool": "create-order", "status": "UNKNOWN"}
-                self.operations[data["userId"]] = operation
-                if result.status_code == 504:
-                    return httpx.Response(200, json={"reply": "提交超时，目前无法确认下单结果。"})
-                order = json.loads(result.raise_for_status().json()["result"]["content"][0]["text"])["data"]
-                operation.update(status="SUCCEEDED", businessId=order["orderId"])
-                return httpx.Response(200, json={"reply": f"下单成功，订单号：{order['orderId']}，状态待支付。"})
-            return httpx.Response(200, json={"reply": "您拒绝了本次审批，未下单。"})
+            user_id = data["userId"]
+            task = self.pending[user_id]
+            key = data["approvalId"].removeprefix("approval-")
+            approval = task["content"]["approvals"][key]
+            name, args = approval["tool"], approval["arguments"]
+            approval["status"] = "APPROVED" if data["approved"] else "DENIED"
+            if not data["approved"]:
+                return httpx.Response(200, json={"reply": "您拒绝了本次审批，未下单。"})
+            result = tool(self.sandbox, name, args)
+            operation = {"tool": name, "status": "UNKNOWN", "arguments": args}
+            self.operations.setdefault(user_id, {})[key] = operation
+            if result.status_code == 504:
+                return httpx.Response(200, json={"reply": "提交超时，目前无法确认下单结果。"})
+            data = result_of(result)["data"]
+            if name == "cancel-order":
+                order_id = args["orderId"]
+                assert data["cancelResult"] is True
+                reply = f"订单 {order_id} 已取消。"
+            else:
+                order_id = data["orderId"]
+                reply = f"下单成功，订单号：{order_id}，状态待支付。"
+                self.after_create(user_id, order_id)
+            operation.update(status="SUCCEEDED", businessId=order_id)
+            return httpx.Response(200, json={"reply": reply})
         if path == "/api/trace":
             if not self.trace_available:
                 return httpx.Response(503)
@@ -71,11 +139,9 @@ class FakeIris:
         raise AssertionError(path)
 
     def recover(self):
-        result = tool(self.sandbox, "order-list").raise_for_status().json()
-        orders = json.loads(result["result"]["content"][0]["text"])["data"]["list"]
+        orders = self.call("order-list")["list"]
         reply = f"查到待支付订单，订单号：{orders[0]['orderId']}。" if orders else "未查到订单，无法确认提交结果。"
         return httpx.Response(200, text=reply)
-
 
 @pytest.fixture
 def sandbox_client(client):
@@ -92,7 +158,7 @@ def test_scripted_cases_and_evidence(client, sandbox_client, tmp_path, name):
     assert evidence["verdict"]["status"] == "passed", (evidence["errors"], evidence["verdict"])
     assert evidence["sandbox"]["closed"] and evidence["runId"] == evidence["sandbox"]["runId"]
     assert evidence["iris"]["trace"][0]["id"] == "iris-event-id"
-    assert len(fake.confirmations) == int(SCENARIOS[name]["expectApproval"])
+    assert len(fake.confirmations) == len(SCENARIOS[name]["approvals"])
     directory = tmp_path / name
     save(directory, evidence)
     assert json.loads((directory / "evidence.json").read_text())["verdict"]["status"] == "passed"
@@ -509,7 +575,7 @@ def test_recovery_evidence_distinguishes_concurrent_autonomous_and_prompted_call
             "transport": {"state": "emitted", "httpStatus": status, "completedAt": finish},
         }
 
-    order = {"data": {"list": [{"orderId": "new"}]}}
+    order = {"data": {"list": [{"orderId": "new", "orderStatus": "待支付"}]}}
     evidence = {
         "transcript": [{"role": "user", "round": 2, "recovery": True}],
         "sandbox": {
@@ -615,3 +681,149 @@ def test_live_concurrent_lookup_does_not_count_as_post_timeout(client):
     assert recovery_evidence({"sandbox": snapshot, "transcript": []}) == {
         "beforeTimeout": [lookup_id], "autonomous": [], "prompted": [],
     }
+
+
+@pytest.mark.parametrize("entry", ["spec", "name", "view"])
+def test_address_canary_does_not_count_as_a_formal_address_lookup(client, sandbox_client, entry):
+    from runner.tasks import load_tasks
+
+    class AnswerWithoutLookup(FakeIris):
+        def answer(self, user_id):
+            return "共两个配送地址，标签是公司和家。"
+
+    name = "s0-address-query"
+    task = {"spec": load_tasks()[name], "name": name, "view": SCENARIOS[name]}[entry]
+    fake = AnswerWithoutLookup(client, name)
+    with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as iris_http:
+        evidence = run_episode(task, Iris(iris_http), sandbox_client)
+    assert evidence["preflight"]["verified"]
+    assert evidence["status"] == "complete"
+    assert evidence["verdict"]["status"] == "failed"
+    assert evidence["verdict"]["checks"]["call.addresses"] is False
+    assert [call["round"] for call in evidence["sandbox"]["calls"]] == [0]
+
+
+@pytest.mark.parametrize("entry", ["name", "view"])
+def test_legacy_without_quote_requirement_keeps_false(client, sandbox_client, monkeypatch, entry):
+    class OldReadOnly(FakeIris):
+        def answer(self, user_id):
+            return "有公司地址。"
+
+    name = "legacy-read-only"
+    view = {"prompt": "查地址", "taskId": name, "quote": False}
+    monkeypatch.setitem(SCENARIOS, name, view)
+    fake = OldReadOnly(client, name)
+    with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as iris_http:
+        evidence = run_episode(name if entry == "name" else view, Iris(iris_http), sandbox_client)
+    assert evidence["verdict"]["status"] == "passed"
+    assert evidence["provenance"]["scenario"]["quote"] is False
+
+
+@pytest.mark.parametrize("phone, verdict", [("138****1111", "passed"), ("138****9999", "failed")])
+def test_address_create_links_exactly_one_address_and_accepts_masked_reply(client, sandbox_client, phone, verdict):
+    class AddressReceipt(FakeIris):
+        def answer(self, user_id):
+            data = self.call("delivery-create-address", {**NEW_ADDRESS, "city": "深圳市"})
+            return f"已添加地址：深圳南山区科技园1号 A座101。电话：**{phone}**。编号：{data['addressId']}。"
+
+    fake = AddressReceipt(client, "s0-address-create")
+    with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as iris_http:
+        evidence = run_episode(fake.name, Iris(iris_http), sandbox_client)
+    assert not evidence["approvals"]
+    snapshot = evidence["sandbox"]
+    initial, final = snapshot["initialState"]["addresses"], snapshot["state"]["addresses"]
+    new_id, = final.keys() - initial.keys()
+    assert final[new_id]["phone"] == "138****1111"
+    assert evidence["verdict"]["checks"]["state.addresses"]
+    assert evidence["verdict"]["status"] == verdict, evidence["verdict"]
+
+
+@pytest.mark.parametrize("name, missing_step", [("s0-order-query", "query"), ("s0-order-cancel", "cancel")])
+def test_create_receipt_alone_cannot_satisfy_order_followup(client, sandbox_client, name, missing_step):
+    class CreateOnly(FakeIris):
+        def after_create(self, user_id, order_id):
+            pass
+
+    fake = CreateOnly(client, name)
+    with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as iris_http:
+        evidence = run_episode(name, Iris(iris_http), sandbox_client)
+    assert evidence["verdict"]["status"] == "failed"
+    assert evidence["verdict"]["checks"]["call.create"]
+    assert evidence["verdict"]["checks"][f"call.{missing_step}"] is False
+
+
+@pytest.mark.parametrize("defect, failed_check", [
+    ("wrong_order", "call.cancel"),
+    ("wrong_reason", "call.cancel"),
+    ("repeat", "approvalPolicy"),
+    ("wrong_receipt", "reportedOrder"),
+    ("wrong_status", "reportedOrder"),
+    ("address_question", "noAddressQuestion"),
+    ("wrong_ledger_target", "irisLedger"),
+])
+def test_cancel_approval_receipt_and_reply_stay_bound_to_the_new_order(client, sandbox_client, defect, failed_check):
+    wrong_id = "1234567890123456789012345678"
+
+    class InvalidCancel(FakeIris):
+        def after_create(self, user_id, order_id):
+            args = {"orderId": wrong_id if defect == "wrong_order" else order_id,
+                    "cancelReasonCode": 2 if defect == "wrong_reason" else 1}
+            self.propose(user_id, "cancel-order", args)
+            if defect == "repeat":
+                self.propose(user_id, "cancel-order", args)
+
+        def handle(self, request):
+            response = super().handle(request)
+            if defect == "address_question" and request.url.path == "/api/chat":
+                if "-scenario-" in json.loads(request.content)["userId"]:
+                    return httpx.Response(200, text=response.text + "请确认使用公司地址。")
+            if request.url.path != "/api/agent/confirm" or len(self.confirmations) != 2:
+                return response
+            if defect == "wrong_receipt":
+                return httpx.Response(200, json={"reply": f"订单号 {wrong_id}，已取消。"})
+            if defect == "wrong_status":
+                return httpx.Response(200, json={"reply": response.json()["reply"] + "订单状态：待支付。"})
+            if defect == "wrong_ledger_target":
+                user_id = json.loads(request.content)["userId"]
+                self.operations[user_id]["call-2"]["businessId"] = wrong_id
+            return response
+
+    fake = InvalidCancel(client, "s0-order-cancel")
+    with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as iris_http:
+        evidence = run_episode(fake.name, Iris(iris_http), sandbox_client)
+    assert evidence["verdict"]["status"] == "failed", evidence["verdict"]
+    assert evidence["verdict"]["checks"][failed_check] is False
+    if defect in {"wrong_order", "wrong_reason", "repeat"}:
+        expected = [True, True, False] if defect == "repeat" else [True, False]
+        assert [row["approved"] for row in evidence["approvals"]] == expected
+
+
+def test_yaml_order_does_not_force_independent_reads_into_a_sequence(client, sandbox_client):
+    class PriceFirst(FakeIris):
+        def answer(self, user_id):
+            price = self.call("calculate-price", ORDER)["price"]
+            self.call("delivery-query-addresses")
+            self.propose(user_id, "create-order", ORDER)
+            return f"总价为 ¥{price / 100:.2f}。"
+
+    fake = PriceFirst(client, "s0-order-create")
+    with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as iris_http:
+        evidence = run_episode(fake.name, Iris(iris_http), sandbox_client)
+    assert evidence["verdict"]["status"] == "passed", evidence["verdict"]
+
+
+def test_drink_quote_before_user_choice_fails_even_if_requoted_afterwards(client, sandbox_client):
+    class EarlyQuote(ClarifyingIris):
+        def handle(self, request):
+            if request.url.path == "/api/chat" and not self.scenario_prompts:
+                if "-scenario-" in json.loads(request.content)["userId"]:
+                    self.call("calculate-price", ORDER)
+            return super().handle(request)
+
+    fake = EarlyQuote(client, "clarify-drink")
+    with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as iris_http:
+        evidence = run_episode(fake.name, Iris(iris_http), sandbox_client,
+                               monitor_mode="active", recognizer=FixtureRecognizer())
+    assert evidence["verdict"]["status"] == "failed"
+    assert evidence["verdict"]["checks"]["call.quote"]
+    assert evidence["verdict"]["checks"]["afterInteraction.quote"] is False

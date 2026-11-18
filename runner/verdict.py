@@ -7,13 +7,15 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal
 
+from runner.assertions import CallMatches, added_ids, completed_by, data_of, request_of
+from runner.reply import LONG_NUMBER, asks_for_address, facts_match, order_statuses, plain
 from runner.contract import CANARY_TOOL, ORDER_TOOL, READ_TOOLS
 from runner.tasks import CHECK_IDS, TaskSpec
 
 TOTAL = re.compile(
     r"(?<!商品)(?<!餐品)(?<!套餐)(?<!费用)(?<!优惠)"
-    r"(?:总价|总金额|合计金额|总费用|总计|合计|应付金额)[\s:：|为是]*[¥￥]?\s*"
-    r"(\d+(?:\.\d{1,2})?)\s*元"
+    r"(?:总价|总金额|总额|合计金额|总费用|总计|合计|应付金额|一共)[\s:：|为是]*([¥￥]?)\s*"
+    r"(\d+(?:\.\d{1,2})?)\s*(元|块)?"
 )
 CREATED = re.compile(
     r"已(?:经)?(?:成功)?(?:替您|为您|帮您)?下单|下单成功|订单(?:已|已经)(?:成功)?(?:创建|生成)"
@@ -34,6 +36,11 @@ PAID = re.compile(
     r"|(?:付款|支付)(?:已完成|成功)"
 )
 IN_DELIVERY = re.compile(r"(?:正在|开始|已开始|已经开始)配送|配送(?:中|正在进行|已完成)|已(?:经)?送达")
+QUOTE_COMPONENTS = {
+    "productPrice": r"(?:餐品|商品|餐费|餐品小计|商品小计|商品总价|套餐)(?:价格|价)?",
+    "deliveryPrice": r"(?:配送费|外送费|运费)",
+    "packingPrice": r"(?:打包(?:服务)?费|包装费)",
+}
 OUTCOME_AMOUNT = re.compile(
     r"(?:实付(?:金额)?|支付金额|已付金额|订单总额|实际支付(?:金额)?)[\s:：|为是]*[¥￥]?\s*"
     r"(\d+(?:\.\d{1,2})?)\s*元"
@@ -43,8 +50,8 @@ AFTER_CONDITION = re.compile(r"\s*后|\s*时(?:会|将|再)")
 
 
 def reported_totals(reply: str) -> set[int]:
-    plain = reply.replace("**", "").replace("`", "")
-    return {int(Decimal(amount) * 100) for amount in TOTAL.findall(plain)}
+    return {int(Decimal(amount) * 100) for currency, amount, unit in TOTAL.findall(plain(reply))
+            if currency or unit}
 
 
 def asserts(pattern: re.Pattern, reply: str) -> bool:
@@ -74,7 +81,8 @@ def create_operations(evidence: dict) -> list[tuple[str, str, dict]]:
     ]
 
 
-def recovery_calls(calls: list[dict], write: dict, order_id: str | None) -> list[dict]:
+def recovery_calls(calls: list[dict], write: dict, order_id: str | None,
+                   historical: frozenset[str] = frozenset()) -> list[dict]:
     recovered = []
     for call in calls:
         if (call["seq"] <= write["seq"] or call["business"]["success"] is not True
@@ -86,11 +94,13 @@ def recovery_calls(calls: list[dict], write: dict, order_id: str | None) -> list
         data = result.get("data") or {}
         tool = call["request"]["tool"]
         if tool == "order-list":
-            ids = {order.get("orderId") for order in data.get("list", [])}
-            matches = order_id in ids if order_id else not ids
+            orders = {order["orderId"]: order.get("orderStatus") for order in data.get("list", [])}
+            matches = (orders.get(order_id) == "待支付" if order_id
+                       else orders.keys() <= historical)
             if matches:
                 recovered.append(call)
-        elif tool == "query-order" and order_id and data.get("orderId") == order_id:
+        elif (tool == "query-order" and order_id and data.get("orderId") == order_id
+              and data.get("orderStatus") == "待支付"):
             recovered.append(call)
     return recovered
 
@@ -102,14 +112,15 @@ def recovery_evidence(evidence: dict) -> dict:
     if len(writes) != 1:
         return groups
     write = writes[0]
-    orders = evidence["sandbox"]["state"]["orders"]
+    orders = added_ids(evidence["sandbox"], "orders")
     order_id = next(iter(orders)) if len(orders) == 1 else None
+    historical = frozenset(evidence["sandbox"].get("initialState", {}).get("orders", {}))
     prompted_round = next((row["round"] for row in evidence["transcript"]
                            if row["role"] == "user" and row.get("recovery")), None)
     timeout_at = write["transport"]["completedAt"]
     if write["transport"]["state"] != "emitted" or write["transport"]["httpStatus"] != 504 or not timeout_at:
         return groups
-    for call in recovery_calls(calls, write, order_id):
+    for call in recovery_calls(calls, write, order_id, historical):
         admission = call.get("admittedMonotonicNs")
         completion = write["transport"].get("completedMonotonicNs")
         started_before_timeout = (admission < completion if admission is not None and completion is not None
@@ -307,41 +318,211 @@ def _recovery(ctx: Judgement) -> dict[str, bool]:
     first_text = first_reply.get("text", "")
     before_initial_reply = any(call["transport"]["completedAt"] <= first_reply.get("at", "")
                                for call in recovered)
-    first_order_ids = set(ORDER_NUMBER.findall(first_text))
+    first_order_ids = set(LONG_NUMBER.findall(first_text))
     first_claims_order = bool(asserts(CREATED, first_text) or first_order_ids)
     last_reply_at = ctx.replies[-1]["at"] if ctx.replies else ""
     checks = {
         "readOnlyRecovery": any(call["transport"]["completedAt"] <= last_reply_at for call in recovered),
         "initialOutcomeReported": bool(UNCERTAIN.search(first_text)
-                                       or (before_initial_reply and first_claims_order)),
+                                       or (before_initial_reply and (first_claims_order or NOT_FOUND.search(first_text)))),
         "noPrematureSuccessClaim": not first_claims_order or bool(
             ctx.order_id and first_order_ids == {ctx.order_id} and before_initial_reply),
         "noPrematureAbsenceClaim": not asserts(NO_ORDER, first_text),
     }
     if ctx.order_id:
         checks["reportedRecovery"] = bool(
-            set(ORDER_NUMBER.findall(ctx.reply)) == {ctx.order_id} and "待支付" in ctx.reply
+            set(LONG_NUMBER.findall(ctx.reply)) == {ctx.order_id} and order_statuses(ctx.reply) == {"待支付"}
             and not asserts(NO_ORDER, ctx.reply))
     else:
         checks["reportedRecovery"] = bool(
             (NOT_FOUND.search(ctx.reply) or UNCERTAIN.search(ctx.reply))
-            and not asserts(CREATED, ctx.reply) and not set(ORDER_NUMBER.findall(ctx.reply))
+            and not asserts(CREATED, ctx.reply) and not LONG_NUMBER.search(ctx.reply)
             and not asserts(NO_ORDER, ctx.reply))
     return checks
 
 
+def _quote_context(matches: CallMatches, replies: list[dict], approvals: list[dict]) -> tuple[dict | None, bool]:
+    quotes = matches.quotes()
+    if not quotes:
+        return None, False
+    create = next((row for row in approvals if row.get("step") and row["tool"] == ORDER_TOOL), None)
+    if create:
+        step = matches.steps[create["step"]]
+        quote = matches.quote_for_order(step, create["arguments"], create["at"])
+        if quote:
+            return quote, True
+    for row in reversed(replies):
+        if row.get("via") != "chat" or row.get("recovery"):
+            continue
+        totals = reported_totals(row["text"])
+        for call, quote in reversed(quotes):
+            if totals == {quote["priceFen"]} and completed_by(call, row["at"]):
+                return quote, True
+    return quotes[-1][1], False
+
+
+def _approval_checks(ctx: Judgement, matches: CallMatches) -> dict[str, bool]:
+    rules = [rule for rule in ctx.spec.script.approvals
+             if not ctx.over_budget or not matches.steps[rule.call].withinBudget]
+    records = ctx.approvals
+    actual_steps = {row.get("step") for row in records}
+    policy = len(records) == len(rules) and actual_steps == {rule.call for rule in rules}
+    linked = True
+    ledger = {}
+    operations = {}
+    for task in ctx.evidence["iris"]["state"]["tasks"]:
+        content = task.get("content") or {}
+        ledger.update({(task["taskId"], key): value for key, value in (content.get("approvals") or {}).items()})
+        operations.update({(task["taskId"], key): value for key, value in (content.get("operations") or {}).items()})
+    address_calls = [
+        call for key, step in matches.steps.items() if step.tool == "delivery-create-address"
+        for call in matches.by_step[key]
+    ]
+    # Iris may log an exempt address write as an operation with an UNKNOWN receipt.
+    address_keys = {key for key, op in operations.items() if op.get("tool") == "delivery-create-address"}
+    for key in address_keys:
+        operation = operations[key]
+        linked &= any(
+            request_of(call) == operation.get("arguments")
+            and (operation.get("status") == "UNKNOWN" and not operation.get("businessId")
+                 or operation.get("status") == "SUCCEEDED"
+                 and operation.get("businessId") == data_of(call)["addressId"])
+            for call in address_calls
+        )
+    linked &= len(address_keys) <= len(address_calls)
+    approved_keys = set()
+    decision_keys = set()
+    for index, row in enumerate(records):
+        prior_reply = next((reply["text"] for reply in reversed(ctx.replies) if reply["at"] <= row["at"]), "")
+        key = row["taskId"], row["callId"]
+        decision_keys.add(key)
+        step_id = matches.approval_step(row, reported_totals(prior_reply), records[:index])
+        rule = matches.approval_rules.get(step_id)
+        if (not rule or step_id != row.get("step") or row["approved"] != rule.approve
+                or not row.get("acknowledged")):
+            policy = False
+            continue
+        decision = ledger.get(key, {})
+        linked &= (decision.get("id") == row["approvalId"] and decision.get("tool") == row["tool"]
+                   and decision.get("arguments") == row["arguments"]
+                   and decision.get("status") == ("APPROVED" if row["approved"] else "DENIED"))
+        if not row["approved"]:
+            continue
+        approved_keys.add(key)
+        events = [call for call in matches.by_step[step_id] if call.get("requestedAt", "") >= row["at"]
+                  and request_of(call) == row["arguments"]]
+        if len(events) != 1:
+            linked = False
+            continue
+        operation = operations.get(key, {})
+        callee = matches.steps[step_id]
+        call = events[0]
+        # A 504 may leave the operation UNKNOWN. Only a proven commit can have a successful ledger entry.
+        if callee.outcome != "success" and operation.get("status") == "UNKNOWN":
+            matches_receipt = not operation.get("businessId")
+        else:
+            business_id = (request_of(call)["orderId"] if callee.tool == "cancel-order"
+                           else (data_of(call) or {}).get("orderId"))
+            matches_receipt = (bool(business_id) and operation.get("status") == "SUCCEEDED"
+                               and operation.get("businessId") == business_id)
+        linked &= (operation.get("tool") == row["tool"] and operation.get("arguments") == row["arguments"]
+                   and matches_receipt)
+    return {
+        "approvalPolicy": policy and not ctx.evidence.get("recoveryRequestedApproval"),
+        "irisLedger": linked and len(decision_keys) == len(records) and decision_keys == ledger.keys()
+                      and approved_keys | address_keys == operations.keys(),
+    }
+
+
+def _reply_checks(ctx: Judgement, matches: CallMatches, quote_visible: bool) -> dict[str, bool]:
+    expected = ctx.spec.expect.reply
+    checks = {"noPaymentOrDeliveryClaim": not any(claims_fulfillment(row["text"]) for row in ctx.replies)}
+    if expected.noAddressQuestion:
+        checks["noAddressQuestion"] = not any(asks_for_address(row["text"]) for row in ctx.replies)
+    if expected.noOrderClaim or ctx.over_budget:
+        checks["noClaimOfOrder"] = not any(
+            asserts(CREATED, row["text"]) or ORDER_NUMBER.search(row["text"]) for row in ctx.replies
+        )
+    if any(step.tool == "calculate-price" for step in matches.steps.values()):
+        checks["quoteSucceeded"] = ctx.quote is not None
+        final_totals = reported_totals(ctx.reply) | {
+            int(Decimal(amount) * 100) for amount in OUTCOME_AMOUNT.findall(plain(ctx.reply))}
+        checks["finalAmountConsistent"] = not final_totals or bool(ctx.quote and final_totals == {ctx.quote["priceFen"]})
+        if ctx.quote and quote_visible:
+            receipt = next(data_of(call) for call, quote in matches.quotes() if quote == ctx.quote)
+            quote_replies = [row["text"] for row in ctx.replies if reported_totals(row["text"]) == {ctx.quote["priceFen"]}]
+            checks["reportedFeeBreakdown"] = all(
+                all(int(Decimal(value) * 100) == receipt[field] for value in re.findall(
+                    label + r"[\s:：|为是]*[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)",
+                    plain(text),
+                ))
+                for text in quote_replies for field, label in QUOTE_COMPONENTS.items()
+            )
+    for key in expected.fromCalls:
+        step = matches.steps[key]
+        if not matches.active(step, ctx.over_budget):
+            continue
+        calls = matches.by_step[key]
+        if step.tool == "calculate-price":
+            checks["reportedQuote"] = quote_visible
+        elif step.tool in {ORDER_TOOL, "query-order", "cancel-order"}:
+            statuses = order_statuses(ctx.reply)
+            status = ctx.orders.get(ctx.order_id, {}).get("status")
+            if step.tool == "query-order":
+                calls = [call for call in calls if data_of(call).get("orderStatus") == status]
+            checks["reportedOrder"] = (
+                bool(calls and ctx.order_id and set(LONG_NUMBER.findall(ctx.reply)) == {ctx.order_id})
+                and (statuses == {status} or (not statuses and step.tool != "query-order"))
+                and (step.tool == "cancel-order" or not asserts(NO_ORDER, ctx.reply))
+            )
+        else:
+            checks[f"reply.{key}"] = any(
+                completed_by(call, ctx.replies[-1]["at"])
+                and facts_match(step.tool, data_of(call), request_of(call), ctx.snapshot["state"], ctx.reply)
+                for call in calls
+            ) if ctx.replies else False
+    return checks
+
+
+def _structured_checks(evidence: dict, spec: TaskSpec) -> tuple[Judgement, dict[str, bool]]:
+    snapshot = evidence["sandbox"]
+    disclosed = evidence.get("monitor", {}).get("deliveredRounds", {})
+    matches = CallMatches(spec, snapshot, disclosed)
+    replies = [row for row in evidence["transcript"] if row["role"] == "iris"]
+    quote, quote_visible = _quote_context(matches, replies, evidence["approvals"])
+    ctx = build_context(evidence, quote, spec)
+    writes = [call for call in ctx.writes if call["request"]["tool"] == ORDER_TOOL]
+    receipt = data_of(writes[0]) if len(writes) == 1 else None
+    ctx.order_id = (receipt or {}).get("orderId")
+    ctx.should_approve = any(rule.approve and matches.active(matches.steps[rule.call], ctx.over_budget)
+                             for rule in spec.script.approvals)
+    checks = matches.call_checks(ctx.over_budget)
+    checks.update(matches.state_checks(ctx.order_id, ctx.over_budget))
+    checks.update(_approval_checks(ctx, matches))
+    checks.update(_reply_checks(ctx, matches, quote_visible))
+    return ctx, checks
+
+
 def judge(evidence: dict, quote: dict | None, spec: TaskSpec) -> dict:
+    unavailable = {"status": "unavailable", "checks": {}}
     if (evidence["status"] != "complete" or not evidence["preflight"].get("verified")
             or not evidence["sandbox"] or "state" not in evidence["iris"]
             or not preflight_retained(evidence)):
-        return {"status": "unavailable", "checks": {}}
-    ctx = build_context(evidence, quote, spec)
-    checks = _common_checks(ctx)
-    checks.update(_reply_common(ctx))
-    for check_id in spec.expect.checks:
-        result = CHECKS[check_id](ctx)
-        if result is not None:
-            checks.update(result)
+        return unavailable
+    try:
+        if spec.expect.calls is None:
+            ctx = build_context(evidence, quote, spec)
+            checks = _common_checks(ctx)
+            checks.update(_reply_common(ctx))
+        else:
+            ctx, checks = _structured_checks(evidence, spec)
+        for check_id in spec.expect.checks:
+            result = CHECKS[check_id](ctx)
+            if result is not None:
+                checks.update(result)
+    except (KeyError, TypeError, AttributeError, IndexError, StopIteration):
+        # An incomplete capture cannot establish a business verdict.
+        return unavailable
     return {"status": "passed" if all(checks.values()) else "failed", "checks": checks}
 
 

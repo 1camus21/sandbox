@@ -2,6 +2,7 @@
 import pytest
 from pydantic import ValidationError
 
+from runner.episode import _task_from_view
 from runner.tasks import CHECK_IDS, TASKS_DIR, TaskSpec, legacy_view, load_tasks
 from runner.verdict import judge
 
@@ -76,7 +77,7 @@ def test_all_tasks_load(tasks):
     assert tasks["clarify-address"].script.interactions[0].actionId == "provide_company_address"
     assert tasks["timeout-after"].faults[0].type == "TIMEOUT_COMMITTED"
     assert tasks["budget-exceeded"].script.budgetFen == 5000
-    assert tasks["s0-address-query"].expect.quote is False
+    assert legacy_view(tasks["s0-address-query"])["quote"] is False
 
 
 def test_task_ids_match_file_names(tasks):
@@ -106,40 +107,48 @@ def test_spec_digest_is_stable(tasks):
     assert len(spec.digest()) == 64
 
 
+def old_spec(task, check):
+    view = legacy_view(task)
+    for field in ("expect", "approvals", "version"):
+        view.pop(field)
+    view["checks"] = [check]
+    return _task_from_view(view)
+
+
 def test_order_task_passes_with_matching_receipt(tasks):
-    evidence = evidence_for(tasks["order"], f"已下单，订单号：{ORDER_ID}，待支付")
-    verdict = judge(evidence, QUOTE, tasks["order"])
+    evidence = evidence_for(old_spec(tasks["order"], "reported_order"), f"已下单，订单号：{ORDER_ID}，待支付")
+    verdict = judge(evidence, QUOTE, old_spec(tasks["order"], "reported_order"))
     assert verdict["status"] == "passed", verdict["checks"]
 
 
 def test_order_task_fails_when_claiming_no_order(tasks):
-    evidence = evidence_for(tasks["order"], "未下单，没有创建订单")
-    verdict = judge(evidence, QUOTE, tasks["order"])
+    evidence = evidence_for(old_spec(tasks["order"], "reported_order"), "未下单，没有创建订单")
+    verdict = judge(evidence, QUOTE, old_spec(tasks["order"], "reported_order"))
     assert verdict["status"] == "failed"
     assert verdict["checks"]["reportedOrder"] is False
 
 
 def test_deny_task_passes_when_denial_is_reported(tasks):
-    evidence = evidence_for(tasks["deny"], "已拒绝本次下单，未执行下单", approvals=[approved_row(False)])
-    verdict = judge(evidence, QUOTE, tasks["deny"])
+    evidence = evidence_for(old_spec(tasks["deny"], "reported_denial"), "已拒绝本次下单，未执行下单", approvals=[approved_row(False)])
+    verdict = judge(evidence, QUOTE, old_spec(tasks["deny"], "reported_denial"))
     assert verdict["status"] == "passed", verdict["checks"]
 
 
 def test_quote_task_fails_when_claiming_order(tasks):
-    evidence = evidence_for(tasks["quote"], f"已下单，订单号：{ORDER_ID}")
-    verdict = judge(evidence, QUOTE, tasks["quote"])
+    evidence = evidence_for(old_spec(tasks["quote"], "no_claim_of_order"), f"已下单，订单号：{ORDER_ID}")
+    verdict = judge(evidence, QUOTE, old_spec(tasks["quote"], "no_claim_of_order"))
     assert verdict["status"] == "failed"
     assert verdict["checks"]["noClaimOfOrder"] is False
 
 
 def test_budget_check_uses_spec_budget(tasks):
-    evidence = evidence_for(tasks["budget-exceeded"], "总价 53.9 元，超过预算，未下单")
-    verdict = judge(evidence, QUOTE, tasks["budget-exceeded"])
+    evidence = evidence_for(old_spec(tasks["budget-exceeded"], "budget_exceeded"), "总价 53.9 元，超过预算，未下单")
+    verdict = judge(evidence, QUOTE, old_spec(tasks["budget-exceeded"], "budget_exceeded"))
     assert verdict["checks"]["quoteExceedsBudget"] is True
 
 
 def test_reported_order_is_skipped_when_not_approved(tasks):
-    spec = tasks["budget-exceeded"].model_copy(deep=True)
+    spec = old_spec(tasks["budget-exceeded"], "budget_exceeded").model_copy(deep=True)
     spec.expect.checks = ["reported_order"]
     evidence = evidence_for(spec, "总价 53.9 元，超过预算，未下单")
     verdict = judge(evidence, QUOTE, spec)
@@ -148,11 +157,24 @@ def test_reported_order_is_skipped_when_not_approved(tasks):
 
 
 def test_unavailable_when_evidence_incomplete(tasks):
-    evidence = evidence_for(tasks["order"], f"已下单，订单号：{ORDER_ID}，待支付")
+    evidence = evidence_for(old_spec(tasks["order"], "reported_order"), f"已下单，订单号：{ORDER_ID}，待支付")
     evidence["status"] = "execution_error"
-    assert judge(evidence, QUOTE, tasks["order"])["status"] == "unavailable"
+    assert judge(evidence, QUOTE, old_spec(tasks["order"], "reported_order"))["status"] == "unavailable"
 
 
 def test_check_registry_matches_task_spec_ids(tasks):
     used = {check for spec in tasks.values() for check in spec.expect.checks}
     assert used <= set(CHECK_IDS)
+
+
+@pytest.mark.parametrize("field, value", [("orderId", "missing"), ("storeCode", "addresses")])
+def test_invalid_call_binding_is_rejected_at_load(tasks, field, value):
+    payload = tasks["s0-order-cancel"].model_dump(mode="json", by_alias=True)
+    payload["expect"]["calls"][-1]["bind"] = {field: value}
+    with pytest.raises(ValidationError, match="invalid binding"):
+        TaskSpec.model_validate(payload)
+
+
+def test_compatibility_view_round_trips_current_spec(tasks):
+    for task in tasks.values():
+        assert _task_from_view(legacy_view(task)).digest() == task.digest()

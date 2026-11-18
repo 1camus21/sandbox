@@ -1,5 +1,5 @@
 taskId: s0-meal-detail
-version: 1
+version: 2
 capability: tool-contract
 env:
   scene: lunch
@@ -13,6 +13,7 @@ script:
   approve: false
   expectApproval: false
 expect:
-  orders: 0
-  quote: false
-  checks: []
+  calls:
+    - {id: detail, tool: query-meal-detail, args: {beType: 2, orderType: 2, storeCode: "100001", code: "100101"}}
+  state: {}
+  reply: {fromCalls: [detail]}

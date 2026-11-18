@@ -1,5 +1,5 @@
 taskId: s0-order-cancel
-version: 1
+version: 2
 capability: tool-contract
 env:
   scene: lunch
@@ -12,11 +12,23 @@ script:
     不要再来问我地址。
     然后下单一份巨无霸三件套（默认搭配）送到该地址，不要付款。
     下单成功后调用 cancel-order 取消这笔订单，cancelReasonCode 用 1，并报告订单号。
-  approve: true
-  expectApproval: true
+  approvals:
+    - {call: create}
+    - {call: cancel}
   budgetFen: 6000
   quoteItems:
     - {productCode: "100101", quantity: 1}
 expect:
-  orders: 1
-  checks: [reported_order]
+  calls:
+    - {id: addresses, tool: delivery-query-addresses, addressTag: 公司}
+    - id: quote
+      tool: calculate-price
+      args: {beType: 2, orderType: 2}
+    - id: create
+      tool: create-order
+      args: {beType: 2, orderType: 2}
+      bind: {addressId: addresses, storeCode: quote}
+      withinBudget: true
+    - {id: cancel, tool: cancel-order, args: {cancelReasonCode: 1}, bind: {orderId: create}, withinBudget: true}
+  state: {order: {from: create, status: 已取消}}
+  reply: {fromCalls: [cancel], noAddressQuestion: true}

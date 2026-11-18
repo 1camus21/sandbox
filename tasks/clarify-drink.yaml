@@ -1,5 +1,5 @@
 taskId: clarify-drink
-version: 1
+version: 2
 capability: clarification
 env:
   scene: lunch
@@ -12,10 +12,9 @@ script:
     送到已有的公司地址。先查询门店和菜单，算出含配送费和打包费的总价，60 元内请发起下单审批。
     请用「总价：…元」报告金额。同一笔订单只提交一次审批。
     不用新增地址，不使用优惠券，也不要付款。
-  approve: true
-  expectApproval: true
+  approvals:
+    - {call: create}
   budgetFen: 6000
-  quoteAfterInteraction: true
   quoteItems:
     - productCode: "100101"
       quantity: 1
@@ -28,5 +27,20 @@ script:
       intentIds: [request_meal_preference]
       reply: 饮料换成中杯鲜萃咖啡，其余按默认搭配。
 expect:
-  orders: 1
-  checks: [reported_order, scripted_interactions]
+  calls:
+    - {id: addresses, tool: delivery-query-addresses, addressTag: 公司}
+    - {id: stores, tool: delivery-query-stores, args: {beType: 2}, bind: {addressId: addresses}}
+    - {id: menu, tool: query-meals, args: {beType: 2, orderType: 2}, bind: {storeCode: stores}, menuProduct: "100101"}
+    - id: quote
+      tool: calculate-price
+      args: {beType: 2, orderType: 2}
+      bind: {storeCode: menu}
+      afterInteraction: provide_drink_preference
+    - id: create
+      tool: create-order
+      args: {beType: 2, orderType: 2}
+      bind: {addressId: addresses, storeCode: quote}
+      withinBudget: true
+  state: {order: {from: create, status: 待支付}}
+  reply: {fromCalls: [quote, create]}
+  checks: [scripted_interactions]

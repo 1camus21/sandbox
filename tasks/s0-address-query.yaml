@@ -1,5 +1,5 @@
 taskId: s0-address-query
-version: 1
+version: 2
 capability: tool-contract
 env:
   scene: lunch
@@ -13,6 +13,7 @@ script:
   approve: false
   expectApproval: false
 expect:
-  orders: 0
-  quote: false
-  checks: []
+  calls:
+    - {id: addresses, tool: delivery-query-addresses}
+  state: {}
+  reply: {fromCalls: [addresses]}

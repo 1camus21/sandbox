@@ -1,5 +1,5 @@
 taskId: s0-price
-version: 1
+version: 2
 capability: tool-contract
 env:
   scene: lunch
@@ -11,10 +11,12 @@ script:
     请帮我算一下：在示例路门店买一份巨无霸三件套（默认搭配），
     含配送费和打包费的总价是多少？
     请用「总价：…元」的格式报告金额。只算价，不要下单。
-  approve: false
-  expectApproval: false
   quoteItems:
     - {productCode: "100101", quantity: 1}
 expect:
-  orders: 0
-  checks: []
+  calls:
+    - id: quote
+      tool: calculate-price
+      args: {beType: 2, orderType: 2, storeCode: "100001"}
+  state: {}
+  reply: {fromCalls: [quote], noOrderClaim: true}

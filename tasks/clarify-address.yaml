@@ -1,5 +1,5 @@
 taskId: clarify-address
-version: 1
+version: 2
 capability: clarification
 env:
   scene: lunch
@@ -12,8 +12,8 @@ script:
     先查询门店和菜单，算出含配送费和打包费的总价，60 元内请发起下单审批。
     请用「总价：…元」报告金额。同一笔订单只提交一次审批。
     不用新增地址，不使用优惠券，也不要付款。
-  approve: true
-  expectApproval: true
+  approvals:
+    - {call: create}
   budgetFen: 6000
   quoteItems:
     - {productCode: "100101", quantity: 1}
@@ -22,5 +22,19 @@ script:
       intentIds: [request_delivery_address, confirm_delivery_address]
       reply: 送到已有的公司地址。
 expect:
-  orders: 1
-  checks: [reported_order, scripted_interactions]
+  calls:
+    - {id: addresses, tool: delivery-query-addresses, addressTag: 公司}
+    - {id: stores, tool: delivery-query-stores, args: {beType: 2}, bind: {addressId: addresses}, afterInteraction: provide_company_address}
+    - {id: menu, tool: query-meals, args: {beType: 2, orderType: 2}, bind: {storeCode: stores}, menuProduct: "100101"}
+    - id: quote
+      tool: calculate-price
+      args: {beType: 2, orderType: 2}
+      bind: {storeCode: menu}
+    - id: create
+      tool: create-order
+      args: {beType: 2, orderType: 2}
+      bind: {addressId: addresses, storeCode: quote}
+      withinBudget: true
+  state: {order: {from: create, status: 待支付}}
+  reply: {fromCalls: [quote, create]}
+  checks: [scripted_interactions]

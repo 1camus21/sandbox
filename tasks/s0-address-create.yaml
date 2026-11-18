@@ -1,5 +1,5 @@
 taskId: s0-address-create
-version: 1
+version: 2
 capability: tool-contract
 env:
   scene: lunch
@@ -14,6 +14,9 @@ script:
   approve: false
   expectApproval: false
 expect:
-  orders: 0
-  quote: false
-  checks: []
+  calls:
+    - id: add
+      tool: delivery-create-address
+      args: {city: 深圳, address: 南山区科技园1号, addressDetail: A座101, contactName: 张三, phone: "13800001111"}
+  state: {address: {from: add}}
+  reply: {fromCalls: [add], noOrderClaim: true}

@@ -1,5 +1,5 @@
 taskId: s0-order-create
-version: 1
+version: 2
 capability: tool-contract
 env:
   scene: lunch
@@ -12,11 +12,21 @@ script:
     直接使用公司地址，不要再来问我地址。
     然后下单一份巨无霸三件套（默认搭配）送到该地址，不要付款。
     请用「总价：…元」报告金额，并报告订单号。
-  approve: true
-  expectApproval: true
+  approvals:
+    - {call: create}
   budgetFen: 6000
   quoteItems:
     - {productCode: "100101", quantity: 1}
 expect:
-  orders: 1
-  checks: [reported_order]
+  calls:
+    - {id: addresses, tool: delivery-query-addresses, addressTag: 公司}
+    - id: quote
+      tool: calculate-price
+      args: {beType: 2, orderType: 2}
+    - id: create
+      tool: create-order
+      args: {beType: 2, orderType: 2}
+      bind: {addressId: addresses, storeCode: quote}
+      withinBudget: true
+  state: {order: {from: create, status: 待支付}}
+  reply: {fromCalls: [quote, create], noAddressQuestion: true}
