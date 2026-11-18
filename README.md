@@ -66,12 +66,12 @@ The timeout scenarios verify the injected response, the order state and Iris led
 Use a dedicated local PostgreSQL database with pgvector, a local Redis instance, and an Iris checkout with its model credentials configured in the Iris `.env` or process environment. In the Sandbox `.env`, set `IRIS_REGRESSION_REPO` and the local database credentials. Set `MONITOR_DASHSCOPE_API_KEY` there to include the clarification scenarios. Relative values for `IRIS_REGRESSION_REPO` are resolved from the Sandbox root. The suite initializes the Iris schema and uses the test ports, database, and Redis database shown in `.env.example`. Java 17 and Maven must be on PATH.
 
 ```sh
-python -m runner.regression
+python -m runner.regression --jobs 2
 ```
 
-Pass task names such as `timeout-before clarify-address` to run a subset. The full suite runs quote, order, denial, budget, both timeout variants, and both clarification scenarios. The clarification cases use Monitor active mode. The command builds Iris once, starts Sandbox on a loopback port, and runs each scenario in a fresh Iris process with its own MCP credentials. It generates the admin token, episode IDs, and MCP tokens and shuts down the processes it starts. To override the configured checkout for a run, pass `--iris-repo /path/to/Iris`.
+Pass task names such as `timeout-before clarify-address timeout-before` to run a subset. Repeated names run independently. With no names the suite runs all tasks in `tasks/`. The clarification cases use Monitor active mode. The command builds Iris and initializes its database schema once, starts one Sandbox on a loopback port, and runs each task execution in a fresh Iris process with its own working directory and MCP credentials. `--jobs` is a positive concurrency limit and defaults to 1. It generates the admin token, episode IDs, and MCP tokens and shuts down the processes it starts. To override the configured checkout for a run, pass `--iris-repo /path/to/Iris`.
 
-The batch `summary.json` links to each case's evidence and lists the verdict and failed checks. The per-case `summary.json` shows the initial query, Iris replies observed by Monitor, matched intents and their evidence, the actual scripted follow-ups, and the final reply. A missing Iris trace is listed under diagnostics. A missing Iris ledger or verified Sandbox snapshot makes the verdict unavailable. Run artifacts and server logs are stored under `runs/regression/` unless overridden with `--out`.
+The batch `summary.json` updates as cases finish and lists them in input order, with links to their evidence, verdicts, and failed checks. It records the wall time and each case's start and finish times. The per-case `summary.json` shows the initial query, Iris replies observed by Monitor, matched intents and their evidence, the actual scripted follow-ups, and the final reply. A missing Iris trace is listed under diagnostics. A missing Iris ledger or verified Sandbox snapshot makes the verdict unavailable. Run artifacts and server logs are stored under `runs/regression/` unless overridden with `--out`.
 
 ### Run the intent monitor
 
