@@ -1,22 +1,7 @@
 {
   "scene_id": "lunch",
   "clock": "2026-11-10 12:00:00",
-  "addresses": [
-    {
-      "addressId": "1000000000000000000000000001",
-      "tag": "公司",
-      "contactName": "沙箱用户",
-      "phone": "100****0001",
-      "fullAddress": "深圳市沙箱测试区示例路1号 A座 101（公司，模拟地址）"
-    },
-    {
-      "addressId": "1000000000000000000000000002",
-      "tag": "家",
-      "contactName": "沙箱用户",
-      "phone": "100****0002",
-      "fullAddress": "深圳市沙箱测试区示例路2号 B座 202（家，模拟地址）"
-    }
-  ],
+  "defaultAddressZone": "zone-a",
   "stores": [
     {
       "storeCode": "100001",
@@ -27,7 +12,7 @@
       "businessEndTime": "22:00",
       "reservation": true,
       "reservationPeriods": [["午餐", ["11:00", "14:59"]], ["晚餐", ["17:00", "21:00"]]],
-      "deliverTo": ["1000000000000000000000000001", "1000000000000000000000000002"],
+      "coverage": ["zone-a", "zone-b"],
       "deliveryFeeFen": 600,
       "packingFee": {"defaultFen": 190, "capFen": 300},
       "menu": "default"
@@ -39,7 +24,7 @@
       "address": "深圳市沙箱测试区示例路4号",
       "businessStartTime": "11:00",
       "businessEndTime": "20:00",
-      "deliverTo": ["1000000000000000000000000001"],
+      "coverage": ["zone-a"],
       "deliveryFeeFen": 800,
       "packingFee": {"defaultFen": 190, "capFen": 300},
       "menu": "default"
@@ -83,16 +68,5 @@
         }
       }
     }
-  },
-  "coupons": [
-    {
-      "couponId": "sandbox-lunch",
-      "couponCode": "SANDBOX5",
-      "title": "麦辣鸡腿汉堡套餐立减5元",
-      "appliesTo": ["100102"],
-      "discountFen": 500,
-      "validFrom": "10:00",
-      "validTo": "21:00"
-    }
-  ]
+  }
 }

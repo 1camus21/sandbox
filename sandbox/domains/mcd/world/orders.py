@@ -28,9 +28,9 @@ def digits(seed: str, n: int) -> str:
     return out[:n]
 
 
-def new_order_id(scene_id: str, seed: int, n: int) -> str:
-    """28 位数字订单号，格式与真实订单号相同；同一场景、同一种子下的第 n 笔订单永远相同。"""
-    return "1030" + digits(f"order:{scene_id}:{seed}:{n}", 24)
+def new_order_id(scene_id: str, account_id: str, seed: int, n: int) -> str:
+    """28 位数字订单号，格式与真实订单号相同；同一场景、账户、种子下的第 n 笔订单永远相同。"""
+    return "1030" + digits(f"order:{scene_id}:{account_id}:{seed}:{n}", 24)
 
 
 def build_order(*, order_id: str, pay_id: str, store: dict, address: dict, priced: Priced,

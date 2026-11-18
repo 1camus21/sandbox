@@ -1,7 +1,4 @@
 import pytest
-from starlette.testclient import TestClient
-
-from sandbox.server import create_app
 
 ADMIN = {"Authorization": "Bearer test-admin"}
 MCP_TOKEN = "test-mcd"
@@ -16,6 +13,11 @@ ORDER = {
 
 @pytest.fixture
 def client():
+    # 惰性导入：领域层用例不依赖 starlette/mcp，可离线执行。
+    from starlette.testclient import TestClient
+
+    from sandbox.server import create_app
+
     with TestClient(create_app(admin_token="test-admin"), base_url="http://localhost") as http:
         yield http
 

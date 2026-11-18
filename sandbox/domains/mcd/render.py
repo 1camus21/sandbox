@@ -6,7 +6,7 @@ from sandbox.episodes import Episode
 
 
 def envelope(ep: Episode, data=None, *, success=True, code=200, message="请求成功") -> dict:
-    trace = f"{ep.scene_id}:{ep.seed}:{ep.seq + 1}"
+    trace = f"{ep.scene_id}:{ep.account_id}:{ep.seed}:{ep.seq + 1}"
     result = {
         "success": success,
         "code": code,

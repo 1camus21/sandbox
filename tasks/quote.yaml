@@ -1,0 +1,19 @@
+taskId: quote
+version: 1
+capability: quote
+env:
+  scene: lunch
+  account: alice
+  seed: 0
+faults: []
+script:
+  prompt: |
+    请通过麦乐送查询已有的公司地址、配送门店和菜单，给一份默认搭配的巨无霸三件套算价，
+    用「总价：…元」报告含配送费和打包费的金额。只询价。
+  approve: false
+  expectApproval: false
+  quoteItems:
+    - {productCode: "100101", quantity: 1}
+expect:
+  orders: 0
+  checks: [no_claim_of_order]

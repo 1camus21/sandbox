@@ -18,11 +18,12 @@ import httpx
 from monitor.qwen import api_key
 from runner.__main__ import run_case, save, source_revision
 from runner.report import save_report, summarize
-from runner.scenarios import SCENARIOS
+from runner.tasks import load_tasks
 from sandbox.config import load_local_env
 
 
 SANDBOX_ROOT = Path(__file__).resolve().parents[1]
+TASKS = load_tasks()
 SANDBOX_PORT = re.compile(r"Uvicorn running on http://127\.0\.0\.1:(\d+)")
 IRIS_PORT = re.compile(r"Tomcat started on port (\d+)")
 IRIS_PROBE = "/api/agent/state?userId=regression-health&sessionId=regression-health"
@@ -115,7 +116,7 @@ def run_suite(args, batch: Path, key: str) -> int:
             for index, scenario in enumerate(args.scenarios, 1):
                 label = f"{index:02d}-{scenario}"
                 episode_id, mcp_token = token_hex(16), token_hex(24)
-                mode = "active" if SCENARIOS[scenario].get("interactions") else "off"
+                mode = "active" if TASKS[scenario].script.interactions else "off"
                 case_env = dict(iris_env, MCD_MCP_URL=f"{sandbox_url}/mcp/{episode_id}/1", MCD_MCP_TOKEN=mcp_token)
                 log = batch / f"{label}.log"
                 print(f"Running {scenario} with Monitor {mode}", flush=True)
@@ -126,7 +127,7 @@ def run_suite(args, batch: Path, key: str) -> int:
                         cwd=Path(work), env=case_env, log=log,
                     ) as iris:
                         iris_url = wait_ready(iris, log, IRIS_PORT, IRIS_PROBE)
-                        evidence = run_case(scenario, iris_url=iris_url + "/api", sandbox_url=sandbox_url,
+                        evidence = run_case(TASKS[scenario], iris_url=iris_url + "/api", sandbox_url=sandbox_url,
                                             admin_token=admin_token, mcp_token=mcp_token, episode_id=episode_id,
                                             seed=args.seed, monitor_mode=mode, key=key if mode == "active" else "")
                         evidence["provenance"].update(irisRevision=revision, irisWorkingTreeDirty=dirty,
@@ -179,10 +180,10 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=Path, default=Path("runs/regression"))
     args = parser.parse_args()
-    args.scenarios = args.scenarios or list(SCENARIOS)
+    args.scenarios = args.scenarios or list(TASKS)
     for scenario in args.scenarios:
-        if scenario not in SCENARIOS:
-            parser.error(f"unknown scenario {scenario!r}; choose from {', '.join(SCENARIOS)}")
+        if scenario not in TASKS:
+            parser.error(f"unknown task {scenario!r}; choose from {', '.join(TASKS)}")
     if args.iris_repo is None or not all((args.iris_repo / name).is_file() for name in ("docs/schema.sql", "pom.xml")):
         parser.error("set --iris-repo or IRIS_REGRESSION_REPO to an Iris checkout")
     if not shutil.which("java") or not shutil.which("mvn"):
@@ -194,7 +195,7 @@ def main() -> int:
     if not re.fullmatch(r"[A-Za-z0-9_]+", args.database):
         parser.error("--database must contain only letters, digits, or underscores")
     key = api_key()
-    if any(SCENARIOS[case].get("interactions") for case in args.scenarios) and not key:
+    if any(TASKS[case].script.interactions for case in args.scenarios) and not key:
         parser.error("set MONITOR_DASHSCOPE_API_KEY or DASHSCOPE_API_KEY for the clarification scenarios")
     batch = (args.out / token_hex(16)).resolve()
     batch.parent.mkdir(parents=True, exist_ok=True)

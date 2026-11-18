@@ -9,10 +9,11 @@ import httpx
 
 from monitor import Recognizer
 from runner.clients import Iris, Sandbox, pending_approvals
-from runner.interactions import POLICY_VERSION, keyword_actions, observe
-from runner.scenarios import (
-    CANARY_PROMPT, CANARY_TOOL, DEFAULT_QUOTE_ITEMS, ORDER_BUDGET_FEN, ORDER_TOOL, READ_TOOLS, RECOVERY_PROMPT, SCENARIOS,
+from runner.contract import (
+    CANARY_PROMPT, CANARY_TOOL, DEFAULT_QUOTE_ITEMS, ORDER_BUDGET_FEN, ORDER_TOOL, READ_TOOLS, RECOVERY_PROMPT,
 )
+from runner.interactions import POLICY_VERSION, keyword_actions, observe
+from runner.tasks import TaskSpec, legacy_view
 from runner.verdict import judge, preflight_retained, recovery_evidence, reported_totals
 from sandbox.domains.mcd.world.pricing import PriceError, price_items
 from sandbox.episodes import SCHEMA_VERSION, utc_now
@@ -28,15 +29,46 @@ def error_message(error: Exception) -> str:
     return f"{type(error).__name__}: {error}"
 
 
-def run_episode(name: str, iris: Iris, sandbox: Sandbox, *, seed: int = 0,
+def _task_from_view(view: dict) -> TaskSpec:
+    """旧场景字典 → TaskSpec，保证既有回放与用例仍可用。"""
+    return TaskSpec(
+        taskId=view.get("taskId", "custom"),
+        env={"scene": view.get("scene", "lunch"), "account": view.get("account", "alice"),
+             "seed": view.get("seed", 0)},
+        faults=view.get("faults", []),
+        script={
+            "prompt": view["prompt"],
+            "approve": view.get("approve", False),
+            "expectApproval": view.get("expectApproval", False),
+            "budgetFen": view.get("budgetFen"),
+            "quoteItems": view.get("quoteItems"),
+            "quoteAfterInteraction": view.get("quoteAfterInteraction", False),
+            "interactions": view.get("interactions", []),
+        },
+        expect={"orders": view.get("orders", 0), "checks": view.get("checks", [])},
+    )
+
+
+def _resolve_task(task) -> TaskSpec:
+    if isinstance(task, TaskSpec):
+        return task
+    if isinstance(task, str):
+        from runner.scenarios import SCENARIOS
+        return _task_from_view(SCENARIOS[task])
+    return _task_from_view(task)
+
+
+def run_episode(task, iris: Iris, sandbox: Sandbox, *, seed: int | None = None,
                 monitor_mode: Literal["off", "shadow", "active"] = "off",
                 recognizer: Recognizer | None = None, requested_episode_id: str | None = None) -> dict:
     if monitor_mode != "off" and recognizer is None:
         raise ValueError("monitor mode requires an intent recognizer")
-    scenario = SCENARIOS[name]
-    actions = scenario.get("interactions", [])
-    quote_items = scenario.get("quoteItems", DEFAULT_QUOTE_ITEMS)
+    task = _resolve_task(task)
+    actions = [item.model_dump() for item in task.script.interactions]
+    quote_items = task.script.quoteItems or DEFAULT_QUOTE_ITEMS
+    budget_fen = task.script.budgetFen or ORDER_BUDGET_FEN
     required_actions = {action["actionId"] for action in actions}
+    effective_seed = task.env.seed if seed is None else seed
     delivered_actions: dict[str, int] = {}
     min_quote_round = 1
     episode_id = requested_episode_id or uuid4().hex
@@ -44,7 +76,9 @@ def run_episode(name: str, iris: Iris, sandbox: Sandbox, *, seed: int = 0,
     generation = 1
     scenario_user = None
     evidence = {
-        "schemaVersion": SCHEMA_VERSION, "runId": episode_id, "scenario": name, "seed": seed, "startedAt": utc_now(),
+        "schemaVersion": SCHEMA_VERSION, "runId": episode_id, "scenario": task.taskId,
+        "taskId": task.taskId, "specVersion": task.version, "seed": effective_seed,
+        "startedAt": utc_now(),
         "status": "complete", "errors": {}, "preflight": {}, "transcript": [], "approvals": [],
         "iris": {}, "sandbox": None,
         "monitor": {"mode": monitor_mode, "policyVersion": POLICY_VERSION, "decisions": [], "deliveredActionIds": []},
@@ -73,7 +107,7 @@ def run_episode(name: str, iris: Iris, sandbox: Sandbox, *, seed: int = 0,
 
     try:
         try:
-            sandbox.start(scenario, seed, episode_id)
+            sandbox.start(task, effective_seed, episode_id)
             owns_episode = True
         except (httpx.TransportError, KeyboardInterrupt):
             # The server may have processed the request before the response was lost.
@@ -102,14 +136,14 @@ def run_episode(name: str, iris: Iris, sandbox: Sandbox, *, seed: int = 0,
 
         scenario_user = identity(episode_id, "scenario")
         evidence["iris"]["identity"] = scenario_user
-        prompt = scenario["prompt"]
+        prompt = task.script.prompt
         follow_up = None
         max_rounds = 3
         for round_number in range(1, max_rounds + 1):
             sandbox.set_round(episode_id, round_number, generation=generation)
             reply = chat(scenario_user, prompt, round_number, follow_up=follow_up)
             follow_up = None
-            if scenario.get("quoteAfterInteraction"):
+            if task.script.quoteAfterInteraction:
                 min_quote_round = max(delivered_actions.values(), default=1)
             for _ in range(6):
                 approvals = pending_approvals(iris.state(scenario_user))
@@ -117,13 +151,12 @@ def run_episode(name: str, iris: Iris, sandbox: Sandbox, *, seed: int = 0,
                     break
                 for approval in approvals:
                     approve = (
-                        scenario["approve"]
+                        task.script.approve
                         and approval["tool"] == ORDER_TOOL
                         and not any(previous["approved"] for previous in evidence["approvals"])
                         and required_actions <= delivered_actions.keys()
                         and matching_quote(sandbox.snapshot(episode_id, generation=generation), approval, reported_totals(reply),
-                                           quote_items, min_round=min_quote_round,
-                                           budget_fen=scenario.get("budgetFen", ORDER_BUDGET_FEN))
+                                           quote_items, min_round=min_quote_round, budget_fen=budget_fen)
                     )
                     decision = {**approval, "round": round_number, "approved": approve, "at": utc_now()}
                     evidence["approvals"].append(decision)
@@ -167,7 +200,7 @@ def run_episode(name: str, iris: Iris, sandbox: Sandbox, *, seed: int = 0,
                 "actionIds": [action["actionId"] for action in chosen],
             }
             prompt = " ".join(action["reply"] for action in chosen)
-        if scenario.get("faults") and any(decision["approved"] for decision in evidence["approvals"]):
+        if task.faults and any(decision["approved"] for decision in evidence["approvals"]):
             sandbox.set_round(episode_id, round_number + 1, generation=generation)
             chat(scenario_user, RECOVERY_PROMPT, round_number + 1, recovery=True)
             if pending_approvals(iris.state(scenario_user)):
@@ -211,7 +244,11 @@ def run_episode(name: str, iris: Iris, sandbox: Sandbox, *, seed: int = 0,
         evidence["errors"]["sandbox.preflight"] = "verified probe is missing from the closed episode generation"
     trace = evidence["iris"].get("trace", [])
     evidence["provenance"] = {
-        "scenario": scenario,
+        "scenario": legacy_view(task),
+        "taskId": task.taskId,
+        "specVersion": task.version,
+        "specSha256": task.digest(),
+        "envId": f"{task.env.scene}:{task.env.account}:{effective_seed}",
         "irisTrace": {
             "events": len(trace),
             "possibleEventLimit": len(trace) >= 500,
@@ -225,9 +262,9 @@ def run_episode(name: str, iris: Iris, sandbox: Sandbox, *, seed: int = 0,
                            if row["approved"]), None)
     quote = (last_quote(snapshot, quote_items, min_round=min_quote_round, store_code=approved_store)
              if snapshot and evidence["status"] == "complete" else None)
-    if scenario.get("faults") and snapshot:
+    if task.faults and snapshot:
         evidence["recovery"] = recovery_evidence(evidence)
-    evidence["verdict"] = judge(evidence, quote)
+    evidence["verdict"] = judge(evidence, quote, task)
     evidence["finishedAt"] = utc_now()
     return evidence
 
@@ -254,7 +291,7 @@ def matching_quote(snapshot: dict, approval: dict, visible_totals: set[int],
     store = state["stores"].get(str(args.get("storeCode")))
     address = state["addresses"].get(str(args.get("addressId")))
     if (not store or not address or address["tag"] != "公司" or args.get("reservationDate")
-            or address["addressId"] not in store["deliverTo"]
+            or not _store_covers(store, address)
             or str(args.get("beType")) != "2" or str(args.get("orderType")) != "2"):
         return False
     quote = last_quote(snapshot, quote_items, min_round=min_round, store_code=store["storeCode"])
@@ -267,6 +304,12 @@ def matching_quote(snapshot: dict, approval: dict, visible_totals: set[int],
     except (PriceError, TypeError, AttributeError):
         return False
     return price.content_key == quote["contentKey"] and price.price == quote["priceFen"]
+
+
+def _store_covers(store: dict, address: dict) -> bool:
+    """门店是否能配送到该地址：地址 zone 落在门店 coverage 内。"""
+    zone = address.get("zone")
+    return zone is not None and zone in store.get("coverage", [])
 
 
 def last_quote(snapshot: dict, quote_items: list[dict] = DEFAULT_QUOTE_ITEMS, *, min_round: int = 1,

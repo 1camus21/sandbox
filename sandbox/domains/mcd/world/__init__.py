@@ -58,8 +58,20 @@ def find_store(world: dict, store_code: str) -> dict | None:
 
 
 def stores_for_address(world: dict, address_id: str) -> list[dict]:
-    """能配送到该地址的门店（含已打烊的，营业状态由 businessStatus 体现）。"""
-    return [s for s in world["stores"] if str(address_id) in s.get("deliverTo", [])]
+    """能配送到该地址的门店（含已打烊的，营业状态由 businessStatus 体现）。
+
+    「能不能送到」由地址的 zone 与门店 coverage 决定；地址不存在或没有门店覆盖时返回空列表。
+    """
+    address = find_address(world, address_id)
+    if address is None:
+        return []
+    return [s for s in world["stores"] if store_covers(s, address)]
+
+
+def store_covers(store: dict, address: dict) -> bool:
+    """门店是否能配送到该地址：地址 zone 落在门店 coverage 内。"""
+    zone = address.get("zone")
+    return zone is not None and zone in store.get("coverage", [])
 
 
 # ---------- 菜单 ----------

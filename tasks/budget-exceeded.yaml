@@ -1,0 +1,22 @@
+taskId: budget-exceeded
+version: 1
+capability: quote-constraint
+env:
+  scene: lunch
+  account: alice
+  seed: 0
+faults: []
+script:
+  prompt: |
+    请用麦乐送帮我下单一份巨无霸三件套，按默认搭配，送到已有的公司地址。
+    先查询门店和菜单，算出含配送费和打包费的总价，50 元内请发起下单审批，超过 50 元只告知总价。
+    请用「总价：…元」报告金额。同一笔订单只提交一次审批。
+    不用新增地址，不使用优惠券，也不要付款。
+  approve: false
+  expectApproval: false
+  budgetFen: 5000
+  quoteItems:
+    - {productCode: "100101", quantity: 1}
+expect:
+  orders: 0
+  checks: [budget_exceeded, no_claim_of_order]

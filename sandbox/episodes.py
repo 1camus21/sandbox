@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sandbox.storage import write_atomic
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 HTTP_FAULTS = {
     "TIMEOUT_COMMITTED": 504,
     "TIMEOUT_NOT_COMMITTED": 504,
@@ -72,10 +72,11 @@ class EpisodeConflict(RuntimeError):
 
 class Episode:
     def __init__(self, domain: Domain, scene: str, seed: int, faults: list[Fault],
-                 episode_id: str | None = None):
+                 episode_id: str | None = None, account: str | None = None):
         self.episode_id = episode_id or uuid4().hex
         self.domain = domain
         self.scene_id = scene
+        self.account_id = account or ""
         self.seed = seed
         self.faults = tuple(faults)
         tool_schema = json.dumps(domain.tools, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -87,7 +88,8 @@ class Episode:
         self.in_flight = 0
 
         tool_names = {tool["name"] for tool in domain.tools}
-        world = domain.open(scene, seed)
+        world = domain.open(scene, seed, account) if account is not None else domain.open(scene, seed)
+        self.account_id = world.get("accountId") or self.account_id
         self.start_faults = []
         for index, fault in enumerate(self.faults):
             if fault.tool != "*" and fault.tool not in tool_names:
@@ -219,6 +221,8 @@ class Episode:
                 "domain": self.domain.name,
                 "toolSchemaSha256": self.tool_schema_sha256,
                 "scene": self.scene_id,
+                "worldId": self.scene_id,
+                "accountId": self.account_id,
                 "seed": self.seed,
                 "closed": self.closed,
                 "round": self.round,
@@ -247,9 +251,9 @@ class EpisodeStore:
             (archive_dir / ".credentials").mkdir(exist_ok=True)
 
     def create(self, token: str, domain: Domain, scene: str, seed: int, faults: list[Fault],
-               episode_id: str | None = None) -> tuple[str, bool]:
+               episode_id: str | None = None, account: str | None = None) -> tuple[str, bool]:
         credential = hashlib.sha256(token.encode()).hexdigest()
-        config = credential, domain.name, scene, seed, tuple(faults)
+        config = credential, domain.name, scene, seed, account, tuple(faults)
         with self.lock:
             if episode_id is not None and episode_id in self.opened:
                 if self.opened[episode_id] != config:
@@ -261,7 +265,7 @@ class EpisodeStore:
             archive = self.archive_path(episode_id) if episode_id else None
             if archive is not None and archive.exists():
                 raise EpisodeConflict("episode ID already has an archive")
-            episode = Episode(domain, scene, seed, faults, episode_id)
+            episode = Episode(domain, scene, seed, faults, episode_id, account)
             if claim is not None:
                 try:
                     with claim.open("x", encoding="utf-8") as file:

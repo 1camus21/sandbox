@@ -1,0 +1,18 @@
+taskId: s0-store-coupons
+version: 1
+capability: tool-contract
+env:
+  scene: lunch
+  account: alice
+  seed: 0
+faults: []
+script:
+  prompt: |
+    请查询示例路门店可用的优惠券，告诉我券名和适用商品。
+    只查询，不要下单。
+  approve: false
+  expectApproval: false
+expect:
+  orders: 0
+  quote: false
+  checks: []

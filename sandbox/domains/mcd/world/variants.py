@@ -1,7 +1,7 @@
-"""按种子生成场景变体。
+"""按种子生成世界与账户变体。
 
-同一个场景，种子不同，价格、配送费、券面额就不同；种子相同，结果完全一样。
-目的是让模型学会“按工具返回的数字算”，而不是背下沙箱里的固定价格。
+同一个场景，种子不同，价格、配送费就不同；同一个账户，种子不同，券面额不同。
+种子相同，结果完全一样。目的是让模型学会“按工具返回的数字算”，而不是背下沙箱里的固定价格。
 
 种子为 0 时不做任何改动：预设题目和测试题单里写的金额都基于种子 0。
 
@@ -20,10 +20,11 @@ COUPON_DISCOUNTS_FEN = [300, 400, 500, 600]
 
 
 def apply_variant(world: dict, seed: int) -> dict:
+    """世界变体：改菜价与配送费，不碰账户数据。"""
     if not seed:
         return world
     rng = random.Random(f"{world.get('scene_id')}:{seed}")
-    changes = {"seed": seed, "prices": {}, "stores": {}, "coupons": {}}
+    changes = {"seed": seed, "prices": {}, "stores": {}}
     steps: dict[str, int] = {}   # 同一餐品在各门店按同样幅度变，保持“门店之间价格关系”不变
     for menu_id in sorted(world.get("menus", {})):
         menu = world["menus"][menu_id]
@@ -39,9 +40,19 @@ def apply_variant(world: dict, seed: int) -> dict:
     for store in world.get("stores", []):
         store["deliveryFeeFen"] = rng.choice(DELIVERY_FEES_FEN)
         changes["stores"][store["storeCode"]] = {"deliveryFeeFen": store["deliveryFeeFen"]}
-    for coupon in world.get("coupons", []):
+    world["variant"] = changes
+    return world
+
+
+def apply_account_variant(account: dict, seed: int) -> dict:
+    """账户变体：只改券面额与标题，不碰世界。"""
+    if not seed:
+        return account
+    rng = random.Random(f"{account.get('accountId')}:{seed}")
+    changes = {"seed": seed, "coupons": {}}
+    for coupon in account.get("coupons", []):
         coupon["discountFen"] = rng.choice(COUPON_DISCOUNTS_FEN)
         coupon["title"] = re.sub(r"立减[\d.]+元", f"立减{yuan(coupon['discountFen'])}元", coupon["title"])
         changes["coupons"][coupon["couponId"]] = coupon["discountFen"]
-    world["variant"] = changes
-    return world
+    account["accountVariant"] = changes
+    return account

@@ -1,0 +1,22 @@
+taskId: s0-order-create
+version: 1
+capability: tool-contract
+env:
+  scene: lunch
+  account: alice
+  seed: 0
+faults: []
+script:
+  prompt: |
+    我的账号里已经有标签为「公司」的配送地址，请先用 delivery-query-addresses 查询地址列表，
+    直接使用公司地址，不要再来问我地址。
+    然后下单一份巨无霸三件套（默认搭配）送到该地址，不要付款。
+    请用「总价：…元」报告金额，并报告订单号。
+  approve: true
+  expectApproval: true
+  budgetFen: 6000
+  quoteItems:
+    - {productCode: "100101", quantity: 1}
+expect:
+  orders: 1
+  checks: [reported_order]

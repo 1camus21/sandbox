@@ -52,12 +52,19 @@ class Sandbox:
         self.http = http
         self.token = token
 
-    def start(self, scenario: dict, seed: int, episode_id: str | None = None) -> str:
+    def start(self, task, seed: int, episode_id: str | None = None) -> str:
+        """开局。task 可以是 TaskSpec，也可以是旧的场景字典。"""
+        if isinstance(task, dict):
+            scene, account = task.get("scene", "lunch"), task.get("account", "alice")
+            faults = task.get("faults", [])
+        else:
+            scene, account = task.env.scene, task.env.account
+            faults = [fault.model_dump() for fault in task.faults]
         episode_id = episode_id or uuid4().hex
         payload = {
             "episodeId": episode_id,
-            "token": self.token, "domain": "mcd", "scene": "lunch", "seed": seed,
-            "faults": scenario.get("faults", []),
+            "token": self.token, "domain": "mcd", "scene": scene,
+            "account": account, "seed": seed, "faults": faults,
         }
         for attempt in range(2):
             try:
