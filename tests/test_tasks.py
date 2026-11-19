@@ -69,15 +69,20 @@ def tasks():
 
 def test_all_tasks_load(tasks):
     assert set(tasks) == {"order", "quote", "deny", "budget-exceeded",
-                          "timeout-before", "timeout-after", "clarify-address", "clarify-drink",
-                          "s0-address-query", "s0-address-create", "s0-store-query",
-                          "s0-meal-query", "s0-meal-detail", "s0-store-coupons",
-                          "s0-my-coupons", "s0-time", "s0-price", "s0-order-create",
-                          "s0-order-list", "s0-order-query", "s0-order-cancel"}
+                          "timeout-before", "timeout-after", "clarify-address", "clarify-drink"}
     assert tasks["clarify-address"].script.interactions[0].actionId == "provide_company_address"
     assert tasks["timeout-after"].faults[0].type == "TIMEOUT_COMMITTED"
     assert tasks["budget-exceeded"].script.budgetFen == 5000
-    assert legacy_view(tasks["s0-address-query"])["quote"] is False
+
+
+def test_task_set_directory_loads_its_tasks():
+    task_set = TASKS_DIR / "20261119T1347"
+
+    assert (task_set / "task-set.json").is_file()
+    loaded = load_tasks(task_set)
+    assert len(loaded) == 13
+    assert loaded["s0-address-query"].expect.quote is False
+    assert loaded["s0-order-create"].script.approvals[0].call == "create"
 
 
 def test_task_ids_match_file_names(tasks):
@@ -169,7 +174,7 @@ def test_check_registry_matches_task_spec_ids(tasks):
 
 @pytest.mark.parametrize("field, value", [("orderId", "missing"), ("storeCode", "addresses")])
 def test_invalid_call_binding_is_rejected_at_load(tasks, field, value):
-    payload = tasks["s0-order-cancel"].model_dump(mode="json", by_alias=True)
+    payload = tasks["order"].model_dump(mode="json", by_alias=True)
     payload["expect"]["calls"][-1]["bind"] = {field: value}
     with pytest.raises(ValidationError, match="invalid binding"):
         TaskSpec.model_validate(payload)
