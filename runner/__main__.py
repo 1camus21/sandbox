@@ -11,6 +11,7 @@ from uuid import uuid4
 import httpx
 
 from monitor.qwen import QwenRecognizer, api_key, model_client
+from runner.batch import new_batch_id, run_manifest
 from runner.clients import Iris, Sandbox
 from runner.episode import run_episode
 from runner.report import save_report, summarize
@@ -20,7 +21,7 @@ from sandbox.storage import write_atomic
 
 
 def save(directory: Path, evidence: dict) -> None:
-    directory.mkdir()
+    directory.mkdir(parents=True, exist_ok=True)
     snapshot = evidence["sandbox"]
     if snapshot is not None:
         lines = (json.dumps(event, ensure_ascii=False) + "\n" for event in snapshot["calls"])
@@ -68,6 +69,8 @@ def main() -> int:
     parser.add_argument("--monitor", choices=("off", "shadow", "active"), default="off",
                         help="record intent decisions or use them for configured scenario replies")
     parser.add_argument("--out", type=Path, default=Path("runs"))
+    parser.add_argument("--batch-id", default=None,
+                        help="批次标识；同一批次的所有局写入 runs/<batchId>/<runId>/")
     args = parser.parse_args()
     if args.episode_id and (len(args.episode_id) != 32 or any(c not in "0123456789abcdef" for c in args.episode_id)):
         parser.error("--episode-id requires 32 lowercase hexadecimal characters")
@@ -81,15 +84,19 @@ def main() -> int:
     key = api_key() if args.monitor != "off" else ""
     if args.monitor != "off" and not key:
         parser.error("set MONITOR_DASHSCOPE_API_KEY or DASHSCOPE_API_KEY")
-    batch = args.out / uuid4().hex
-    batch.mkdir(parents=True)
+    batch_id = args.batch_id or new_batch_id()
+    batch_dir = args.out / batch_id
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    run_id = args.episode_id or uuid4().hex
     source = source_revision()
     evidence = run_case(tasks[args.task], iris_url=args.iris, sandbox_url=args.sandbox, admin_token=admin_token,
-                        mcp_token=mcp_token, episode_id=args.episode_id, seed=args.seed,
+                        mcp_token=mcp_token, episode_id=run_id, seed=args.seed,
                         monitor_mode=args.monitor, key=key)
     evidence["provenance"].update(runnerSource=source, irisRevision=args.iris_revision)
-    directory = batch / f"01-{args.task}"
+    directory = batch_dir / run_id
     save(directory, evidence)
+    write_atomic(directory / "run.json", (
+        json.dumps(run_manifest(run_id, tasks[args.task], evidence), ensure_ascii=False, indent=2) + "\n",))
     verdict = evidence["verdict"]["status"]
     print(f"{args.task} {verdict} {directory.resolve()}")
     if evidence["status"] == "interrupted":
