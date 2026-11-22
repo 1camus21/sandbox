@@ -103,6 +103,28 @@ class StateSpec(BaseModel):
 
     order: OrderSpec | None = None
     address: EntitySpec | None = None
+    domains: dict[str, "StateSpec"] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _split_domains(cls, value):
+        """允许 {mcd: {...}, echo: {...}} 的按领域写法。"""
+        if not isinstance(value, dict):
+            return value
+        known = {"order", "address", "domains"}
+        extra = {key: item for key, item in value.items() if key not in known}
+        if not extra:
+            return value
+        rest = {key: item for key, item in value.items() if key in known}
+        rest["domains"] = extra
+        return rest
+
+    def for_domain(self, name: str) -> "StateSpec":
+        if name in self.domains:
+            return self.domains[name]
+        if not self.domains:
+            return self
+        return StateSpec()
 
 
 class ReplySpec(BaseModel):
@@ -237,11 +259,15 @@ class TaskSpec(BaseModel):
         for ref in self.expect.reply.fromCalls:
             if ref not in steps:
                 raise ValueError(f"unknown reply call: {ref}")
-        for entity, tool in ((self.expect.state.order, "create-order"),
-                             (self.expect.state.address, "delivery-create-address")):
+        for name in self.expect.state.domains:
+            if name not in names:
+                raise ValueError(f"unknown domain in state: {name}")
+        state = self.expect.state.for_domain(names[0])
+        for entity, tool in ((state.order, "create-order"),
+                             (state.address, "delivery-create-address")):
             if entity and (entity.call not in steps or steps[entity.call].tool != tool):
                 raise ValueError(f"state must reference {tool}")
-        self.expect.orders = int(self.expect.state.order is not None)
+        self.expect.orders = int(state.order is not None)
         self.expect.quote = any(step.tool == "calculate-price" for step in calls)
         return self
 

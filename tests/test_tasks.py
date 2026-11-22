@@ -242,3 +242,22 @@ def test_unregistered_domain_skips_tool_whitelist():
     }
     spec = TaskSpec.model_validate(payload)
     assert spec.expect.calls[0].tool == "echo-say"
+
+
+def test_state_can_be_declared_per_domain():
+    base = load_tasks(TASKS_DIR / "20261119T2229")["s0-order-create"]
+    payload = base.model_dump(mode="json", by_alias=True)
+    payload["taskId"] = "t"
+    payload["expect"]["state"] = {"mcd": payload["expect"]["state"]}
+    rebuilt = TaskSpec.model_validate(payload)
+    assert rebuilt.expect.state.for_domain("mcd").order is not None
+    assert rebuilt.expect.orders == 1
+
+
+def test_state_domain_must_be_declared():
+    base = load_tasks(TASKS_DIR / "20261119T2229")["s0-order-create"]
+    payload = base.model_dump(mode="json", by_alias=True)
+    payload["taskId"] = "t"
+    payload["expect"]["state"] = {"echo": {"order": payload["expect"]["state"]["order"]}}
+    with pytest.raises(ValidationError, match="unknown domain in state"):
+        TaskSpec.model_validate(payload)

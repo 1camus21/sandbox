@@ -249,7 +249,7 @@ class CallMatches:
 
     def state_checks(self, order_id: str | None, over_budget: bool) -> dict[str, bool]:
         initial = self.snapshot["initialState"]
-        expected = self.spec.expect.state
+        expected = self.spec.expect.state.for_domain("mcd")
         base = {key for key in initial if key not in {"orders", "addresses", "quotes"}}
         checks = {"otherBusinessState": all(initial[key] == self.state[key] for key in base)}
         quote_calls = {str(call["seq"]) for call in self.snapshot["calls"]
