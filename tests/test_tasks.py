@@ -261,3 +261,16 @@ def test_state_domain_must_be_declared():
     payload["expect"]["state"] = {"echo": {"order": payload["expect"]["state"]["order"]}}
     with pytest.raises(ValidationError, match="unknown domain in state"):
         TaskSpec.model_validate(payload)
+
+
+def test_task_can_declare_inline_world():
+    from runner.batch import task_env
+
+    payload = {
+        "taskId": "t", "script": {"prompt": "p"},
+        "env": {"domains": [{"name": "mcd", "worldInline": {
+            "clock": "2026-11-10 12:00:00", "stores": [], "menus": {}}}]},
+    }
+    spec = TaskSpec.model_validate(payload)
+    assert task_env(spec)["worlds"] == {"mcd": "@inline"}
+    assert task_env(spec)["inlineWorlds"] == ["mcd"]
