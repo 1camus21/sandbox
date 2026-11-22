@@ -94,3 +94,15 @@ def test_validate_rejects_check_domains_not_declared():
         "expect": {"checks": {"all": ["test.mixed"]}},
     })
     validate_checks(both)
+
+
+def test_mix_view_exposes_only_shared_facts():
+    from assertions.context import CheckContext
+
+    ctx = CheckContext(spec=None, evidence={}, quote=None, clock="2026-11-10 12:00:00",
+                       calls=[{"domain": "mcd"}], transcript=[], worlds={"mcd": {}},
+                       accounts={"mcd": {}}, initial={"mcd": {}})
+    mix = ctx.mix(("mcd", "echo"))
+    assert mix.calls == [{"domain": "mcd"}]
+    assert mix.domains == ("mcd", "echo")
+    assert not hasattr(mix, "world")
