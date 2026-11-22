@@ -77,6 +77,7 @@ class CallSpec(BaseModel):
 
     id: str
     tool: str
+    domain: str | None = None
     args: dict[str, StrictStr | StrictInt | StrictBool] = Field(default_factory=dict)
     bind: dict[Literal["addressId", "storeCode", "orderId"], str] = Field(default_factory=dict)
     addressTag: str | None = None
@@ -179,6 +180,14 @@ class TaskSpec(BaseModel):
         steps = {step.id: step for step in calls}
         if len(steps) != len(calls):
             raise ValueError("repeated call ID")
+        names = [entry.name for entry in self.env.domains] if self.env.domains else ["mcd"]
+        if len(set(names)) != len(names):
+            raise ValueError("repeated domain")
+        for step in calls:
+            if step.domain is None:
+                step.domain = names[0]
+            elif step.domain not in names:
+                raise ValueError(f"unknown domain for step {step.id}: {step.domain}")
         actions = {action.actionId for action in self.script.interactions}
         if len(actions) != len(self.script.interactions):
             raise ValueError("repeated interaction ID")

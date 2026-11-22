@@ -75,3 +75,22 @@ def test_expand_groups_all_any_optional():
     assert tree.checks[1].spec.id == "reported_order"
     assert [node.spec.id for node in tree.checks[2].checks] == ["budget_exceeded"]
     assert [node.spec.id for node in tree.checks[3].checks] == ["recovery"]
+
+
+def test_validate_rejects_check_domains_not_declared():
+    from assertions.validate import validate_checks
+
+    mixed = check(id="test.mixed", version=1, domains=("mcd", "echo"))(lambda ctx: True)
+    registry.register(mixed)
+    only_mcd = TaskSpec.model_validate({
+        "taskId": "t", "script": {"prompt": "p"},
+        "expect": {"checks": {"all": ["test.mixed"]}},
+    })
+    with pytest.raises(ValueError, match="requires domains: echo"):
+        validate_checks(only_mcd)
+    both = TaskSpec.model_validate({
+        "taskId": "t", "script": {"prompt": "p"},
+        "env": {"domains": [{"name": "mcd"}, {"name": "echo"}]},
+        "expect": {"checks": {"all": ["test.mixed"]}},
+    })
+    validate_checks(both)

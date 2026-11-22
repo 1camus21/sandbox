@@ -15,11 +15,19 @@ def declared_names(spec) -> list[str]:
     return list(dict.fromkeys(names))
 
 
+def task_domains(spec) -> set[str]:
+    return {entry.name for entry in spec.env.domains} if spec.env.domains else {"mcd"}
+
+
 def validate_checks(spec) -> None:
-    """未知检查名直接报错；领域覆盖等校验在接入多领域后补充。"""
+    """未知检查名、领域覆盖不满足都直接报错。"""
     registry.discover()
+    domains = task_domains(spec)
     for name in declared_names(spec):
         try:
-            registry.resolve(name)
+            check = registry.resolve(name)
         except LookupError:
             raise ValueError(f"unknown check: {name}") from None
+        missing = set(check.spec.domains) - domains
+        if missing:
+            raise ValueError(f"check {name} requires domains: {', '.join(sorted(missing))}")

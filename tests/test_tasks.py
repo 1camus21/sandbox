@@ -196,3 +196,32 @@ def test_invalid_call_binding_is_rejected_at_load(tasks, field, value):
 def test_compatibility_view_round_trips_current_spec(tasks):
     for task in tasks.values():
         assert _task_from_view(legacy_view(task)).digest() == task.digest()
+
+
+def test_step_domain_defaults_to_primary_domain():
+    spec = TaskSpec.model_validate({
+        "taskId": "t", "script": {"prompt": "p"},
+        "expect": {"calls": [{"id": "time", "tool": "now-time-info"}]},
+    })
+    assert spec.expect.calls[0].domain == "mcd"
+
+
+def test_step_domain_must_be_declared():
+    payload = {
+        "taskId": "t", "script": {"prompt": "p"},
+        "env": {"domains": [{"name": "mcd", "scene": "lunch", "account": "alice"}]},
+        "expect": {"calls": [{"id": "time", "tool": "now-time-info", "domain": "echo"}]},
+    }
+    with pytest.raises(ValidationError, match="unknown domain"):
+        TaskSpec.model_validate(payload)
+
+
+def test_step_domain_accepts_declared_domain():
+    payload = {
+        "taskId": "t", "script": {"prompt": "p"},
+        "env": {"domains": [{"name": "mcd", "scene": "lunch", "account": "alice"},
+                            {"name": "echo", "scene": "default", "account": "guest"}]},
+        "expect": {"calls": [{"id": "time", "tool": "now-time-info", "domain": "echo"}]},
+    }
+    spec = TaskSpec.model_validate(payload)
+    assert spec.expect.calls[0].domain == "echo"

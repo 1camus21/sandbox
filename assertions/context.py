@@ -5,6 +5,16 @@ from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
+class MixView:
+    """跨领域检查的视图：只有调用、对话与时间，不暴露领域状态。"""
+
+    calls: list[dict]
+    transcript: list[dict]
+    clock: str | None
+    domains: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class CheckContext:
     spec: object
     evidence: dict
@@ -19,6 +29,9 @@ class CheckContext:
 
     def domain(self, name: str) -> "DomainView":
         return DomainView(self, name)
+
+    def mix(self, domains: tuple[str, ...]) -> MixView:
+        return MixView(self.calls, self.transcript, self.clock, domains)
 
 
 @dataclass(frozen=True)
