@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import yaml
 
+from assertions.validate import validate_checks
 from runner.tasks import TASKS_DIR, EnvDomain, TaskSpec, load_tasks
 
 
@@ -57,17 +58,37 @@ def task_env(spec: TaskSpec) -> dict:
     }
 
 
+def validate(plan: BatchPlan, tasks: dict[str, TaskSpec]) -> list[str]:
+    """批次级校验：收集全部问题，不遇错即停。"""
+    task_ids = plan.tasks or tuple(sorted(tasks))
+    problems: list[str] = []
+    if not task_ids:
+        problems.append("task set has no tasks")
+    for task_id in task_ids:
+        spec = tasks.get(task_id)
+        if spec is None:
+            problems.append(f"unknown task: {task_id}")
+            continue
+        try:
+            task_env(spec)
+        except ValueError as error:
+            problems.append(f"{task_id}: {error}")
+        try:
+            validate_checks(spec)
+        except ValueError as error:
+            problems.append(f"{task_id}: {error}")
+    return problems
+
+
 def prepare(plan: BatchPlan, tasks: dict[str, TaskSpec], out_root: Path) -> dict:
     """创建批次目录，冻结任务定义，写入初始清单。
 
     计划未显式列出任务时，使用任务集目录里的全部任务。
     """
+    problems = validate(plan, tasks)
+    if problems:
+        raise ValueError("batch validation failed:\n" + "\n".join(problems))
     task_ids = plan.tasks or tuple(sorted(tasks))
-    if not task_ids:
-        raise ValueError("task set has no tasks")
-    unknown = [task_id for task_id in task_ids if task_id not in tasks]
-    if unknown:
-        raise ValueError(f"unknown tasks: {', '.join(unknown)}")
     batch_dir = out_root / plan.batch_id
     specs_dir = batch_dir / "specs"
     specs_dir.mkdir(parents=True, exist_ok=True)
@@ -164,11 +185,22 @@ def main(argv: list[str] | None = None) -> int:
     aggregate_parser.add_argument("--batch", type=Path, required=True,
                                   help="批次目录，例如 runs/b-20261119-abcd")
 
+    validate_parser = sub.add_parser("validate", help="只校验批次与任务，不创建批次目录")
+    validate_parser.add_argument("--plan", type=Path, required=True)
+    validate_parser.add_argument("--tasks-dir", type=Path, default=TASKS_DIR)
+
     args = parser.parse_args(argv)
     if args.action == "prepare":
         plan = load_plan(args.plan)
         manifest = prepare(plan, load_tasks(args.tasks_dir), args.out)
         print(f"{plan.batch_id} planned={manifest['counts']['planned']} -> {args.out / plan.batch_id}")
+    elif args.action == "validate":
+        plan = load_plan(args.plan)
+        problems = validate(plan, load_tasks(args.tasks_dir))
+        for problem in problems:
+            print(problem)
+        print(json.dumps({"problems": len(problems)}, ensure_ascii=False))
+        return 1 if problems else 0
     else:
         manifest = aggregate(args.batch)
         print(json.dumps(manifest["counts"], ensure_ascii=False))
