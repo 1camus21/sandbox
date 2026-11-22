@@ -15,7 +15,8 @@ def snapshot(client, episode_id):
 def test_default_account_and_snapshot_fields(client):
     run_id = start(client)
     snap = snapshot(client, run_id)
-    assert snap["schemaVersion"] == 2
+    assert snap["schemaVersion"] == 3
+    assert snap["domains"] == ["mcd"]
     assert snap["scene"] == snap["worldId"] == "lunch"
     assert snap["accountId"] == "alice"
 

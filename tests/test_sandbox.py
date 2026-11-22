@@ -259,7 +259,8 @@ def test_closed_episode_can_be_listed_and_purged(client):
     assert client.delete(path, headers=ADMIN).status_code == 409
     admin(client, run_id, "close", "POST")
     rows = client.get("/admin/episodes", headers=ADMIN).raise_for_status().json()["episodes"]
-    assert rows == [{"episodeId": run_id, "closed": True, "domain": "mcd", "scene": "lunch"}]
+    assert rows == [{"episodeId": run_id, "closed": True, "domain": "mcd",
+                     "domains": ["mcd"], "scene": "lunch"}]
     assert client.delete(path, headers=ADMIN).status_code == 204
     assert client.get(f"{path}/snapshot", headers=ADMIN).status_code == 404
 

@@ -6,7 +6,7 @@ import pytest
 import sandbox.domains.mcd as mcd_module
 from sandbox.domains.mcd import McDelivery
 from sandbox.domains.mcd.world import stores_for_address
-from sandbox.episodes import Episode, Fault
+from sandbox.episodes import DomainConfig, Episode, Fault
 
 STATE_KEYS = {"clock", "addresses", "stores", "menus", "coupons",
               "soldOut", "invalidCoupons", "quotes", "orders"}
@@ -33,22 +33,27 @@ def patch_account(monkeypatch, account: dict) -> None:
     monkeypatch.setattr(mcd_module, "load_account", lambda name: json.loads(json.dumps(account)))
 
 
+def episode(domain, *, scene="lunch", seed=0, faults=None, account="alice") -> Episode:
+    return Episode([DomainConfig(domain, scene, account)], seed, faults or [])
+
+
 def test_accounts_and_scenes_are_discoverable(domain):
     assert domain.accounts() == ["alice", "bob"]
     assert "lunch" in domain.worlds()
 
 
 def test_episode_carries_world_and_account_identity(domain):
-    episode = Episode(domain, "lunch", 0, [], account="alice")
-    snapshot = episode.snapshot()
-    assert episode.account_id == "alice"
-    assert snapshot["schemaVersion"] == 2
+    episode_instance = episode(domain)
+    snapshot = episode_instance.snapshot()
+    assert episode_instance.account_id == "alice"
+    assert snapshot["schemaVersion"] == 3
     assert snapshot["scene"] == snapshot["worldId"] == "lunch"
     assert snapshot["accountId"] == "alice"
+    assert snapshot["domains"] == ["mcd"]
 
 
 def test_state_projection_keys_are_unchanged(domain):
-    snapshot = Episode(domain, "lunch", 0, [], account="alice").snapshot()
+    snapshot = episode(domain).snapshot()
     assert set(snapshot["state"]) == STATE_KEYS
     assert set(snapshot["initialState"]) == STATE_KEYS
     assert "sandbox-lunch" in snapshot["state"]["coupons"]
@@ -58,24 +63,24 @@ def test_tool_schema_is_unchanged(domain):
     names = {tool["name"] for tool in domain.tools}
     assert len(names) == 13
     assert {"calculate-price", "create-order", "delivery-query-stores", "query-store-coupons"} <= names
-    alice = Episode(domain, "lunch", 0, [], account="alice")
-    bob = Episode(domain, "lunch", 0, [], account="bob")
+    alice = episode(domain)
+    bob = episode(domain, account="bob")
     assert alice.tool_schema_sha256 == bob.tool_schema_sha256
 
 
 def test_uncovered_address_has_no_stores(domain):
-    bob = Episode(domain, "lunch", 0, [], account="bob")
+    bob = episode(domain, account="bob")
     assert stores_for_address(bob.world, bob.account, BOB_UNCOVERED_ADDRESS) == []
 
 
 def test_covered_address_has_stores(domain):
-    alice = Episode(domain, "lunch", 0, [], account="alice")
+    alice = episode(domain)
     assert len(stores_for_address(alice.world, alice.account, COVERED_ADDRESS)) == 2
 
 
 def test_order_ids_differ_between_accounts(domain):
-    alice = Episode(domain, "lunch", 0, [], account="alice")
-    bob = Episode(domain, "lunch", 0, [], account="bob")
+    alice = episode(domain)
+    bob = episode(domain, account="bob")
     alice.round = bob.round = 1
     alice_event, _ = alice.invoke("create-order", {**ORDER, "addressId": COVERED_ADDRESS}, 7, None)
     bob_event, _ = bob.invoke("create-order", {**ORDER, "addressId": BOB_COVERED_ADDRESS}, 7, None)
@@ -114,8 +119,7 @@ def test_dangling_menu_reference_is_rejected(domain, monkeypatch):
 
 
 def test_start_coupon_fault_applies_to_account_coupon(domain):
-    episode = Episode(domain, "lunch", 0,
-                      [Fault(type="COUPON_INVALID", target="sandbox-lunch", at="start")],
-                      account="alice")
-    assert episode.account["invalidCoupons"] == ["sandbox-lunch"]
-    assert episode.snapshot()["initialState"]["invalidCoupons"] == {"sandbox-lunch": True}
+    episode_instance = episode(domain, faults=[
+        Fault(type="COUPON_INVALID", target="sandbox-lunch", at="start")])
+    assert episode_instance.account["invalidCoupons"] == ["sandbox-lunch"]
+    assert episode_instance.snapshot()["initialState"]["invalidCoupons"] == {"sandbox-lunch": True}

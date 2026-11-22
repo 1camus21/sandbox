@@ -41,18 +41,25 @@ class McDelivery:
         account["invalidCoupons"] = list(user.get("invalidCoupons") or [])
         return account
 
-    def state(self, world: dict, account: dict) -> dict[str, dict]:
+    def world_state(self, world: dict) -> dict:
         return {
             "clock": {"now": world["clock"]},
-            "addresses": {row["addressId"]: row for row in account["addresses"]},
             "stores": {row["storeCode"]: row for row in world["stores"]},
             "menus": world["menus"],
-            "coupons": {row["couponId"]: row for row in account["coupons"]},
             "soldOut": dict.fromkeys(world["soldOut"], True),
+        }
+
+    def account_state(self, account: dict) -> dict:
+        return {
+            "addresses": {row["addressId"]: row for row in account["addresses"]},
+            "coupons": {row["couponId"]: row for row in account["coupons"]},
             "invalidCoupons": dict.fromkeys(account["invalidCoupons"], True),
             "quotes": {str(row["callSeq"]): row for row in account["quotes"]},
             "orders": {row["orderId"]: row for row in account["orders"]},
         }
+
+    def state(self, world: dict, account: dict) -> dict[str, dict]:
+        return {**self.world_state(world), **self.account_state(account)}
 
     def fault(self, world: dict, account: dict, fault: Fault) -> None:
         target = fault.target

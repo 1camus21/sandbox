@@ -37,7 +37,8 @@ def _task_from_view(view: dict) -> TaskSpec:
         version=view.get("version", 1),
         capability=view.get("capability"),
         env={"scene": view.get("scene", "lunch"), "account": view.get("account", "alice"),
-             "seed": view.get("seed", 0)},
+             "seed": view.get("seed", 0),
+             **({"domains": view["domains"]} if view.get("domains") else {})},
         faults=view.get("faults", []),
         script={
             "prompt": view["prompt"],

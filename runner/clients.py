@@ -57,15 +57,19 @@ class Sandbox:
         if isinstance(task, dict):
             scene, account = task.get("scene", "lunch"), task.get("account", "alice")
             faults = task.get("faults", [])
+            domains = task.get("domains")
         else:
             scene, account = task.env.scene, task.env.account
             faults = [fault.model_dump() for fault in task.faults]
+            domains = [entry.model_dump() for entry in task.env.domains] if task.env.domains else None
         episode_id = episode_id or uuid4().hex
         payload = {
             "episodeId": episode_id,
             "token": self.token, "domain": "mcd", "scene": scene,
             "account": account, "seed": seed, "faults": faults,
         }
+        if domains:
+            payload["domains"] = domains
         for attempt in range(2):
             try:
                 result = self.http.post("/episodes", json=payload).raise_for_status().json()

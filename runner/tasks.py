@@ -27,12 +27,21 @@ CHECK_IDS = (
 )
 
 
+class EnvDomain(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    scene: str = "lunch"
+    account: str = "alice"
+
+
 class EnvSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     scene: str = "lunch"
     account: str = "alice"
     seed: int = 0
+    domains: list[EnvDomain] | None = None
 
 
 class InteractionSpec(BaseModel):
@@ -280,4 +289,5 @@ def legacy_view(spec: TaskSpec) -> dict:
         "scene": spec.env.scene,
         "account": spec.env.account,
         "seed": spec.env.seed,
+        **({"domains": [entry.model_dump() for entry in spec.env.domains]} if spec.env.domains else {}),
     }
