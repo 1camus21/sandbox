@@ -3,30 +3,12 @@
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
+from assertions.primitives.calls import completed_by, data_of, request_of, successful
 from runner.contract import DEFAULT_QUOTE_ITEMS, ORDER_TOOL, READ_TOOLS
 from runner.tasks import CallSpec, TaskSpec
 from sandbox.domains.mcd.handlers import ParamError, _as_int
 from sandbox.domains.mcd.world.orders import CANCEL_REASONS
 from sandbox.domains.mcd.world.pricing import PriceError, price_items
-
-
-def data_of(call: dict):
-    result = call["business"]["result"]
-    return result.get("data") if isinstance(result, dict) else result
-
-
-def request_of(call: dict) -> dict:
-    return call["request"]["arguments"]
-
-
-def successful(call: dict) -> bool:
-    return (call["business"]["success"] is True and call["transport"]["state"] == "emitted"
-            and call["transport"]["httpStatus"] == 200)
-
-
-def completed_by(call: dict, at: str | None) -> bool:
-    completed = call["transport"].get("completedAt")
-    return at is None or bool(completed and completed <= at)
 
 
 def argument_matches(field: str, actual, expected) -> bool:

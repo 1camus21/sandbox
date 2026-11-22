@@ -8,7 +8,7 @@ from uuid import uuid4
 import httpx
 
 from monitor import Recognizer
-from runner.assertions import CallMatches
+from assertions.domains.mcd.matches import CallMatches
 from runner.clients import Iris, Sandbox, pending_approvals
 from runner.contract import (
     CANARY_PROMPT, CANARY_TOOL, DEFAULT_QUOTE_ITEMS, ORDER_BUDGET_FEN, ORDER_TOOL, READ_TOOLS, RECOVERY_PROMPT,
