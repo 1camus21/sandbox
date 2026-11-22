@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import yaml
 
+from assertions.load import load_checks
 from assertions.validate import validate_checks
 from runner.tasks import TASKS_DIR, EnvDomain, TaskSpec, load_tasks
 
@@ -58,8 +59,10 @@ def task_env(spec: TaskSpec) -> dict:
     }
 
 
-def validate(plan: BatchPlan, tasks: dict[str, TaskSpec]) -> list[str]:
+def validate(plan: BatchPlan, tasks: dict[str, TaskSpec], *, task_set_dir: Path | None = None) -> list[str]:
     """批次级校验：收集全部问题，不遇错即停。"""
+    if task_set_dir is not None:
+        load_checks(Path(task_set_dir) / "checks.py")
     task_ids = plan.tasks or tuple(sorted(tasks))
     problems: list[str] = []
     if not task_ids:
@@ -80,12 +83,13 @@ def validate(plan: BatchPlan, tasks: dict[str, TaskSpec]) -> list[str]:
     return problems
 
 
-def prepare(plan: BatchPlan, tasks: dict[str, TaskSpec], out_root: Path) -> dict:
+def prepare(plan: BatchPlan, tasks: dict[str, TaskSpec], out_root: Path,
+            *, task_set_dir: Path | None = None) -> dict:
     """创建批次目录，冻结任务定义，写入初始清单。
 
     计划未显式列出任务时，使用任务集目录里的全部任务。
     """
-    problems = validate(plan, tasks)
+    problems = validate(plan, tasks, task_set_dir=task_set_dir)
     if problems:
         raise ValueError("batch validation failed:\n" + "\n".join(problems))
     task_ids = plan.tasks or tuple(sorted(tasks))
@@ -192,11 +196,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.action == "prepare":
         plan = load_plan(args.plan)
-        manifest = prepare(plan, load_tasks(args.tasks_dir), args.out)
+        manifest = prepare(plan, load_tasks(args.tasks_dir), args.out, task_set_dir=args.tasks_dir)
         print(f"{plan.batch_id} planned={manifest['counts']['planned']} -> {args.out / plan.batch_id}")
     elif args.action == "validate":
         plan = load_plan(args.plan)
-        problems = validate(plan, load_tasks(args.tasks_dir))
+        problems = validate(plan, load_tasks(args.tasks_dir), task_set_dir=args.tasks_dir)
         for problem in problems:
             print(problem)
         print(json.dumps({"problems": len(problems)}, ensure_ascii=False))

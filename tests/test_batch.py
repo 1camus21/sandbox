@@ -158,6 +158,25 @@ def test_prepare_rejects_repeated_domain(workdir):
         prepare(load_plan(_write_plan(workdir, ["dup"])), {"dup": spec}, workdir / "runs")
 
 
+def test_validate_loads_task_set_checks(workdir):
+    from runner.batch import BatchPlan, validate
+
+    task_dir = workdir / "taskset"
+    task_dir.mkdir()
+    (task_dir / "checks.py").write_text(
+        "from assertions.types import check\n\n"
+        "@check(id=\"s0.wired\", version=1, domains=(\"mcd\",))\n"
+        "def wired(ctx):\n"
+        "    return True\n",
+        encoding="utf-8")
+    (task_dir / "t.yaml").write_text(
+        "taskId: t\nscript:\n  prompt: p\nexpect:\n  checks:\n    all: [s0.wired]\n",
+        encoding="utf-8")
+    plan = BatchPlan(batch_id="b-test", name="n", task_set_id="taskset", tasks=("t",))
+
+    assert validate(plan, load_tasks(task_dir), task_set_dir=task_dir) == []
+
+
 def _write_plan(directory: Path, tasks: list[str]) -> Path:
     plan_path = directory / f"plan-{len(tasks)}-{uuid4().hex[:6]}.yaml"
     plan_path.write_text("tasks: [" + ", ".join(tasks) + "]\n", encoding="utf-8")
