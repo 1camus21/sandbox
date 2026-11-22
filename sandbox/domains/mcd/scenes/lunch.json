@@ -1,6 +1,7 @@
 {
   "scene_id": "lunch",
   "clock": "2026-11-10 12:00:00",
+  "window": {"from": "2026-11-10T10:00:00+08:00", "to": "2026-11-10T21:00:00+08:00"},
   "defaultAddressZone": "zone-a",
   "stores": [
     {

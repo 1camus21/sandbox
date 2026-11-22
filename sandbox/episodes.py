@@ -8,7 +8,7 @@ import logging
 import re
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
 from time import monotonic_ns
@@ -63,6 +63,7 @@ class Domain(Protocol):
     def accounts(self) -> list[str]: ...
     def load_world(self, world_id: str, seed: int) -> dict: ...
     def load_account(self, account_id: str | None, world: dict, seed: int) -> dict: ...
+    def world_window(self, world: dict) -> dict | None: ...
     def world_state(self, world: dict) -> dict: ...
     def account_state(self, account: dict) -> dict: ...
     def state(self, world: dict, account: dict) -> dict[str, dict]: ...
@@ -72,20 +73,59 @@ class Domain(Protocol):
 
 @dataclass(frozen=True)
 class DomainConfig:
-    """一局里一个领域的开局参数。"""
+    """一局里一个领域的开局参数；inline 数据存在时优先于标识引用。"""
 
     domain: Domain
     scene: str
     account: str | None = None
+    world_inline: dict | None = None
+    account_inline: dict | None = None
 
 
 class EpisodeConflict(RuntimeError):
     pass
 
 
+def _parse_moment(value: str) -> datetime:
+    """按业务本地时间比较；窗口与场景时钟都不带时区参与运算。"""
+    return datetime.fromisoformat(value.replace(" ", "T")).replace(tzinfo=None)
+
+
+def _resolve_clock(worlds: dict[str, dict], domains: dict[str, Domain], primary: str,
+                   requested: str | None) -> tuple[datetime, dict | None]:
+    """按世界窗口确定一局的时钟；窗口无交集时拒绝开局。"""
+    windows = []
+    for name, world in worlds.items():
+        window = domains[name].world_window(world)
+        if window is not None:
+            windows.append((name, window, _parse_moment(window["from"]), _parse_moment(window["to"])))
+    if requested is not None:
+        moment = _parse_moment(requested)
+        for name, window, start, end in windows:
+            if not start <= moment <= end:
+                raise ValueError(f"clock outside world window: {name} {window['from']}..{window['to']}")
+        return moment, None
+    if not windows:
+        return _parse_moment(worlds[primary]["clock"]), None
+    start = max(item[2] for item in windows)
+    end = min(item[3] for item in windows)
+    if start > end:
+        detail = ", ".join(f"{name} {window['from']}..{window['to']}"
+                           for name, window, _, _ in windows)
+        raise ValueError(f"worlds have no overlapping window: {detail}")
+    primary_clock = _parse_moment(worlds[primary]["clock"])
+    if start <= primary_clock <= end:
+        moment = primary_clock
+    elif start + timedelta(hours=1) <= end:
+        moment = start + timedelta(hours=1)
+    else:
+        moment = start
+    return moment, {"from": start.isoformat(), "to": end.isoformat()}
+
+
 class Episode:
     def __init__(self, configs: list[DomainConfig], seed: int, faults: list[Fault],
-                 episode_id: str | None = None):
+                 episode_id: str | None = None, clock: str | None = None):
         if not configs:
             raise ValueError("episode needs at least one domain")
         names = [config.domain.name for config in configs]
@@ -94,7 +134,8 @@ class Episode:
         self.episode_id = episode_id or uuid4().hex
         self.configs = tuple(configs)
         self.domains = {config.domain.name: config.domain for config in configs}
-        self.scene_ids = {config.domain.name: config.scene for config in configs}
+        self.scene_ids = {config.domain.name: ("@inline" if config.world_inline is not None else config.scene)
+                          for config in configs}
         self.account_ids: dict[str, str] = {}
         self.worlds: dict[str, dict] = {}
         self.accounts: dict[str, dict] = {}
@@ -118,11 +159,29 @@ class Episode:
                     raise ValueError(f"tool {name} defined by multiple domains")
                 self.tool_domains[name] = config.domain.name
         for config in configs:
-            world = config.domain.load_world(config.scene, seed)
-            account = config.domain.load_account(config.account, world, seed)
+            if config.world_inline is not None:
+                loader = getattr(config.domain, "load_inline_world", None)
+                if loader is None:
+                    raise ValueError(f"domain {config.domain.name} does not support inline world")
+                world = loader(config.world_inline, seed)
+            else:
+                world = config.domain.load_world(config.scene, seed)
+            if config.account_inline is not None:
+                loader = getattr(config.domain, "load_inline_account", None)
+                if loader is None:
+                    raise ValueError(f"domain {config.domain.name} does not support inline account")
+                account = loader(config.account_inline, world, seed)
+            else:
+                account = config.domain.load_account(config.account, world, seed)
             self.worlds[config.domain.name] = world
             self.accounts[config.domain.name] = account
             self.account_ids[config.domain.name] = account.get("accountId") or (config.account or "")
+        moment, window = _resolve_clock(self.worlds, self.domains, self.primary, clock)
+        self.clock = moment.strftime("%Y-%m-%d %H:%M:%S")
+        self.window = window
+        for world in self.worlds.values():
+            if "clock" in world:
+                world["clock"] = self.clock
         self.start_faults: list[int] = []
         for index, fault in enumerate(self.faults):
             if fault.tool != "*" and fault.tool not in self.tool_domains:
@@ -294,6 +353,8 @@ class Episode:
                 "worldIds": dict(self.scene_ids),
                 "accountId": self.account_ids[primary],
                 "accountIds": dict(self.account_ids),
+                "clock": self.clock,
+                "window": self.window,
                 "seed": self.seed,
                 "closed": self.closed,
                 "round": self.round,
@@ -330,11 +391,13 @@ class EpisodeStore:
             (archive_dir / ".credentials").mkdir(exist_ok=True)
 
     def create(self, token: str, configs: list[DomainConfig], seed: int, faults: list[Fault],
-               episode_id: str | None = None) -> tuple[str, bool]:
+               episode_id: str | None = None, clock: str | None = None) -> tuple[str, bool]:
         credential = hashlib.sha256(token.encode()).hexdigest()
         config = (credential,
-                  tuple((item.domain.name, item.scene, item.account) for item in configs),
-                  seed, tuple(faults))
+                  tuple((item.domain.name, item.scene, item.account,
+                         json.dumps(item.world_inline, sort_keys=True),
+                         json.dumps(item.account_inline, sort_keys=True)) for item in configs),
+                  seed, tuple(faults), clock)
         with self.lock:
             if episode_id is not None and episode_id in self.opened:
                 if self.opened[episode_id] != config:
@@ -346,7 +409,7 @@ class EpisodeStore:
             archive = self.archive_path(episode_id) if episode_id else None
             if archive is not None and archive.exists():
                 raise EpisodeConflict("episode ID already has an archive")
-            episode = Episode(configs, seed, faults, episode_id)
+            episode = Episode(configs, seed, faults, episode_id, clock)
             if claim is not None:
                 try:
                     with claim.open("x", encoding="utf-8") as file:

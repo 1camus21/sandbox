@@ -41,6 +41,9 @@ class McDelivery:
         account["invalidCoupons"] = list(user.get("invalidCoupons") or [])
         return account
 
+    def world_window(self, world: dict) -> dict | None:
+        return world.get("window")
+
     def world_state(self, world: dict) -> dict:
         return {
             "clock": {"now": world["clock"]},
@@ -57,6 +60,25 @@ class McDelivery:
             "quotes": {str(row["callSeq"]): row for row in account["quotes"]},
             "orders": {row["orderId"]: row for row in account["orders"]},
         }
+
+    def load_inline_world(self, data: dict, seed: int) -> dict:
+        world = deepcopy(data)
+        world.setdefault("soldOut", [])
+        world.setdefault("stores", [])
+        world.setdefault("menus", {})
+        if "clock" not in world:
+            raise ValueError("inline world needs clock")
+        return world
+
+    def load_inline_account(self, data: dict, world: dict, seed: int) -> dict:
+        account = deepcopy(data)
+        account.setdefault("addresses", [])
+        account.setdefault("coupons", [])
+        account.setdefault("orders", [])
+        account.setdefault("quotes", [])
+        account.setdefault("invalidCoupons", [])
+        self._check_references(world, account)
+        return account
 
     def state(self, world: dict, account: dict) -> dict[str, dict]:
         return {**self.world_state(world), **self.account_state(account)}

@@ -32,6 +32,9 @@ class EchoDomain:
     def load_account(self, account_id, world, seed):
         return {"accountId": account_id or "guest", "spoken": []}
 
+    def world_window(self, world):
+        return None
+
     def world_state(self, world):
         return {"greeting": {"value": {"text": world["greeting"]}}}
 

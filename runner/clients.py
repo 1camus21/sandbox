@@ -58,16 +58,21 @@ class Sandbox:
             scene, account = task.get("scene", "lunch"), task.get("account", "alice")
             faults = task.get("faults", [])
             domains = task.get("domains")
+            clock = task.get("clock")
         else:
             scene, account = task.env.scene, task.env.account
             faults = [fault.model_dump() for fault in task.faults]
-            domains = [entry.model_dump() for entry in task.env.domains] if task.env.domains else None
+            domains = ([entry.model_dump(exclude_none=True) for entry in task.env.domains]
+                       if task.env.domains else None)
+            clock = task.env.clock
         episode_id = episode_id or uuid4().hex
         payload = {
             "episodeId": episode_id,
             "token": self.token, "domain": "mcd", "scene": scene,
             "account": account, "seed": seed, "faults": faults,
         }
+        if clock:
+            payload["clock"] = clock
         if domains:
             payload["domains"] = domains
         for attempt in range(2):

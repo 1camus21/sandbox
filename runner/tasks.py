@@ -34,6 +34,8 @@ class EnvDomain(BaseModel):
     name: str
     scene: str = "lunch"
     account: str = "alice"
+    worldInline: dict[str, Any] | None = None
+    accountInline: dict[str, Any] | None = None
 
 
 class EnvSpec(BaseModel):
@@ -42,6 +44,7 @@ class EnvSpec(BaseModel):
     scene: str = "lunch"
     account: str = "alice"
     seed: int = 0
+    clock: str | None = None
     domains: list[EnvDomain] | None = None
 
 
@@ -327,5 +330,6 @@ def legacy_view(spec: TaskSpec) -> dict:
         "scene": spec.env.scene,
         "account": spec.env.account,
         "seed": spec.env.seed,
+        "clock": spec.env.clock,
         **({"domains": [entry.model_dump() for entry in spec.env.domains]} if spec.env.domains else {}),
     }

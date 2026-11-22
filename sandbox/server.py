@@ -37,8 +37,10 @@ class OpenDomain(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(pattern=r"^[a-z0-9_-]{1,32}$")
-    scene: str = Field(min_length=1, max_length=64)
+    scene: str = Field(default="lunch", min_length=1, max_length=64)
     account: str | None = Field(default=None, pattern=r"^[a-z0-9_-]{1,32}$")
+    worldInline: dict | None = None
+    accountInline: dict | None = None
 
 
 class OpenEpisode(BaseModel):
@@ -50,6 +52,7 @@ class OpenEpisode(BaseModel):
     scene: str = "lunch"
     account: str = Field(default="alice", pattern=r"^[a-z0-9_-]{1,32}$")
     seed: int = 0
+    clock: str | None = None
     faults: list[Fault] = Field(default_factory=list)
     domains: list[OpenDomain] | None = None
 
@@ -234,15 +237,19 @@ def create_app(*, admin_token: str | None = None, domains: list[Domain] | None =
             configs = []
             for entry in entries:
                 domain = registry.get(entry.name)
-                if domain is None or entry.scene not in domain.worlds():
-                    raise ValueError(f"unknown domain or scene: {entry.name}/{entry.scene}")
-                if entry.account is not None and entry.account not in domain.accounts():
+                if domain is None:
+                    raise ValueError(f"unknown domain: {entry.name}")
+                if entry.worldInline is None and entry.scene not in domain.worlds():
+                    raise ValueError(f"unknown world: {entry.name}/{entry.scene}")
+                if entry.accountInline is None and entry.account is not None and entry.account not in domain.accounts():
                     raise ValueError(f"unknown account: {entry.account}")
-                configs.append(DomainConfig(domain=domain, scene=entry.scene, account=entry.account))
+                configs.append(DomainConfig(domain=domain, scene=entry.scene, account=entry.account,
+                                            world_inline=entry.worldInline,
+                                            account_inline=entry.accountInline))
             if compare_digest(config.token, admin_token):
                 raise ValueError("episode and admin tokens must differ")
             episode_id, created = store.create(config.token, configs, config.seed, config.faults,
-                                               config.episodeId)
+                                               config.episodeId, config.clock)
         except ValidationError as error:
             return JSONResponse({"errors": error.errors(include_input=False, include_context=False)}, status_code=400)
         except ValueError as error:
