@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import yaml
 
-from runner.tasks import TASKS_DIR, TaskSpec, load_tasks
+from runner.tasks import TASKS_DIR, EnvDomain, TaskSpec, load_tasks
 
 
 def new_batch_id(now: datetime | None = None) -> str:
@@ -43,6 +43,20 @@ def _spec_payload(spec: TaskSpec) -> dict:
     return spec.model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
+def task_env(spec: TaskSpec) -> dict:
+    """任务声明的领域、世界与账户；未声明 domains 时按单领域 mcd 处理。"""
+    entries = spec.env.domains or [
+        EnvDomain(name="mcd", scene=spec.env.scene, account=spec.env.account)]
+    names = [entry.name for entry in entries]
+    if len(set(names)) != len(names):
+        raise ValueError(f"{spec.taskId}: repeated domain")
+    return {
+        "domains": names,
+        "worlds": {entry.name: entry.scene for entry in entries},
+        "accounts": {entry.name: entry.account for entry in entries},
+    }
+
+
 def prepare(plan: BatchPlan, tasks: dict[str, TaskSpec], out_root: Path) -> dict:
     """创建批次目录，冻结任务定义，写入初始清单。
 
@@ -63,7 +77,7 @@ def prepare(plan: BatchPlan, tasks: dict[str, TaskSpec], out_root: Path) -> dict
         (specs_dir / f"{task_id}.yaml").write_text(
             yaml.safe_dump(_spec_payload(spec), allow_unicode=True, sort_keys=False),
             encoding="utf-8")
-        entries.append({"taskId": task_id, "specSha256": spec.digest()})
+        entries.append({"taskId": task_id, "specSha256": spec.digest(), **task_env(spec)})
     manifest = {
         "batchId": plan.batch_id,
         "name": plan.name,
@@ -71,6 +85,11 @@ def prepare(plan: BatchPlan, tasks: dict[str, TaskSpec], out_root: Path) -> dict
         "seed": plan.seed,
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "tasks": entries,
+        "domains": sorted({name for entry in entries for name in entry["domains"]}),
+        "worlds": {
+            name: sorted({entry["worlds"][name] for entry in entries if name in entry["worlds"]})
+            for name in {name for entry in entries for name in entry["worlds"]}
+        },
         "runs": [],
         "counts": {"planned": len(task_ids), "completed": 0, "passed": 0,
                    "failed": 0, "unavailable": 0, "errored": 0},
@@ -116,6 +135,7 @@ def run_manifest(run_id: str, task: TaskSpec, evidence: dict) -> dict:
     return {
         "runId": run_id,
         "taskId": task.taskId,
+        "domains": task_env(task)["domains"],
         "verdict": verdict,
         "status": evidence.get("status"),
         "failedChecks": sorted(name for name, ok in checks.items() if ok is False),

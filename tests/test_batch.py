@@ -132,6 +132,32 @@ def test_run_manifest_extracts_verdict_fields():
     assert manifest["envId"] == "lunch:alice:0"
 
 
+def test_prepare_records_domains_and_worlds(workdir):
+    tasks = load_tasks()
+    plan = load_plan(_write_plan(workdir, ["order"]))
+
+    manifest = prepare(plan, tasks, workdir / "runs")
+
+    entry = manifest["tasks"][0]
+    assert entry["domains"] == ["mcd"]
+    assert entry["worlds"] == {"mcd": "lunch"}
+    assert entry["accounts"] == {"mcd": "alice"}
+    assert manifest["domains"] == ["mcd"]
+    assert manifest["worlds"] == {"mcd": ["lunch"]}
+
+
+def test_prepare_rejects_repeated_domain(workdir):
+    from runner.tasks import TaskSpec
+
+    spec = TaskSpec.model_validate({
+        "taskId": "dup",
+        "script": {"prompt": "p"},
+        "env": {"domains": [{"name": "mcd"}, {"name": "mcd"}]},
+    })
+    with pytest.raises(ValueError, match="repeated domain"):
+        prepare(load_plan(_write_plan(workdir, ["dup"])), {"dup": spec}, workdir / "runs")
+
+
 def _write_plan(directory: Path, tasks: list[str]) -> Path:
     plan_path = directory / f"plan-{len(tasks)}-{uuid4().hex[:6]}.yaml"
     plan_path.write_text("tasks: [" + ", ".join(tasks) + "]\n", encoding="utf-8")
