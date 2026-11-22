@@ -35,7 +35,7 @@ def patch_account(monkeypatch, account: dict) -> None:
 
 def test_accounts_and_scenes_are_discoverable(domain):
     assert domain.accounts() == ["alice", "bob"]
-    assert "lunch" in domain.scenes()
+    assert "lunch" in domain.worlds()
 
 
 def test_episode_carries_world_and_account_identity(domain):
@@ -65,12 +65,12 @@ def test_tool_schema_is_unchanged(domain):
 
 def test_uncovered_address_has_no_stores(domain):
     bob = Episode(domain, "lunch", 0, [], account="bob")
-    assert stores_for_address(bob.world, BOB_UNCOVERED_ADDRESS) == []
+    assert stores_for_address(bob.world, bob.account, BOB_UNCOVERED_ADDRESS) == []
 
 
 def test_covered_address_has_stores(domain):
     alice = Episode(domain, "lunch", 0, [], account="alice")
-    assert len(stores_for_address(alice.world, COVERED_ADDRESS)) == 2
+    assert len(stores_for_address(alice.world, alice.account, COVERED_ADDRESS)) == 2
 
 
 def test_order_ids_differ_between_accounts(domain):
@@ -88,16 +88,18 @@ def test_coupon_referencing_unknown_product_is_rejected(domain, monkeypatch):
     account = account_fixture("alice")
     account["coupons"][0]["appliesTo"] = ["999999"]
     patch_account(monkeypatch, account)
+    world = domain.load_world("lunch", 0)
     with pytest.raises(ValueError, match="999999"):
-        domain.open("lunch", 0, "alice")
+        domain.load_account("alice", world, 0)
 
 
 def test_duplicate_address_id_is_rejected(domain, monkeypatch):
     account = account_fixture("alice")
     account["addresses"].append(dict(account["addresses"][0]))
     patch_account(monkeypatch, account)
+    world = domain.load_world("lunch", 0)
     with pytest.raises(ValueError, match="重复"):
-        domain.open("lunch", 0, "alice")
+        domain.load_account("alice", world, 0)
 
 
 def test_dangling_menu_reference_is_rejected(domain, monkeypatch):
@@ -106,13 +108,14 @@ def test_dangling_menu_reference_is_rejected(domain, monkeypatch):
     scene = load_scene("lunch")
     scene["stores"][0]["menu"] = "missing-menu"
     monkeypatch.setattr(mcd_module, "load_scene", lambda name: json.loads(json.dumps(scene)))
+    world = domain.load_world("lunch", 0)
     with pytest.raises(ValueError, match="菜单"):
-        domain.open("lunch", 0, "alice")
+        domain.load_account("alice", world, 0)
 
 
 def test_start_coupon_fault_applies_to_account_coupon(domain):
     episode = Episode(domain, "lunch", 0,
                       [Fault(type="COUPON_INVALID", target="sandbox-lunch", at="start")],
                       account="alice")
-    assert episode.world["invalidCoupons"] == ["sandbox-lunch"]
+    assert episode.account["invalidCoupons"] == ["sandbox-lunch"]
     assert episode.snapshot()["initialState"]["invalidCoupons"] == {"sandbox-lunch": True}

@@ -229,6 +229,14 @@ def load_tasks(directory: Path = TASKS_DIR) -> dict[str, TaskSpec]:
     return tasks
 
 
+def load_all_tasks(directory: Path = TASKS_DIR) -> dict[str, TaskSpec]:
+    """根目录的旧场景 + 各任务集目录里的任务，供按任务标识查找的兼容层使用。"""
+    tasks = load_tasks(directory)
+    for path in sorted(Path(directory).glob("*/task-set.json")):
+        tasks.update(load_tasks(path.parent))
+    return tasks
+
+
 def legacy_view(spec: TaskSpec) -> dict:
     """供证据回放与旧工具读取的字典视图。"""
     expect = spec.expect

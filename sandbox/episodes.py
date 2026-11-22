@@ -59,10 +59,12 @@ class Domain(Protocol):
     tools: list[dict]
     business_faults: frozenset[str]
 
-    def scenes(self) -> list[str]: ...
-    def open(self, scene: str, seed: int) -> dict: ...
-    def state(self, world: dict) -> dict[str, dict]: ...
-    def fault(self, world: dict, fault: Fault) -> None: ...
+    def worlds(self) -> list[str]: ...
+    def accounts(self) -> list[str]: ...
+    def load_world(self, world_id: str, seed: int) -> dict: ...
+    def load_account(self, account_id: str | None, world: dict, seed: int) -> dict: ...
+    def state(self, world: dict, account: dict) -> dict[str, dict]: ...
+    def fault(self, world: dict, account: dict, fault: Fault) -> None: ...
     def call(self, episode: Episode, tool: str, arguments: dict) -> Outcome: ...
 
 
@@ -88,8 +90,9 @@ class Episode:
         self.in_flight = 0
 
         tool_names = {tool["name"] for tool in domain.tools}
-        world = domain.open(scene, seed, account) if account is not None else domain.open(scene, seed)
-        self.account_id = world.get("accountId") or self.account_id
+        world = domain.load_world(scene, seed)
+        account = domain.load_account(account, world, seed)
+        self.account_id = account.get("accountId") or self.account_id
         self.start_faults = []
         for index, fault in enumerate(self.faults):
             if fault.tool != "*" and fault.tool not in tool_names:
@@ -103,13 +106,14 @@ class Episode:
                 if fault.at == "start" and (fault.tool != "*" or fault.nth != 1 or fault.persist):
                     raise ValueError("start faults take no tool selector, ordinal, or persistence")
                 # Validate scheduled targets against the fixture before accepting the run.
-                domain.fault(deepcopy(world), fault)
+                domain.fault(deepcopy(world), deepcopy(account), fault)
                 if fault.at == "start":
-                    domain.fault(world, fault)
+                    domain.fault(world, account, fault)
                     self.start_faults.append(index)
             else:
                 raise ValueError(f"unknown fault: {fault.type}")
         self.initial_world = world
+        self.initial_account = account
         self.reset()
 
     def reset(self) -> None:
@@ -119,6 +123,7 @@ class Episode:
                 raise EpisodeConflict("episode is closed")
             self.generation += 1
             self.world = deepcopy(self.initial_world)
+            self.account = deepcopy(self.initial_account)
             self.seq = self.round = 0
             self.calls: list[dict] = []
             self.counters: dict[str, int] = {}
@@ -150,7 +155,7 @@ class Episode:
             execute = override is None or override.type == "TIMEOUT_COMMITTED"
             business_faults = [index for index in due if self.faults[index].type in self.domain.business_faults]
             planned_status = (200 if override.mode == "rpc-error" else HTTP_FAULTS[override.type]) if override else None
-            before = deepcopy(self.domain.state(self.world))
+            before = deepcopy(self.domain.state(self.world, self.account))
             event = {
                 "schemaVersion": SCHEMA_VERSION,
                 "type": "tool.call",
@@ -178,7 +183,7 @@ class Episode:
             }
             if execute:
                 for index in business_faults:
-                    self.domain.fault(self.world, self.faults[index])
+                    self.domain.fault(self.world, self.account, self.faults[index])
                 event["faults"].extend(business_faults)
                 try:
                     outcome = self.domain.call(self, tool, arguments)
@@ -191,7 +196,7 @@ class Episode:
                     log.exception("Domain %s failed calling %s", self.domain.name, tool)
                     event["business"] = {"executed": True, "success": None, "result": None, "error": "domain error"}
 
-            after = self.domain.state(self.world)
+            after = self.domain.state(self.world, self.account)
             for collection in sorted(before.keys() | after.keys()):
                 old_values, new_values = before.get(collection, {}), after.get(collection, {})
                 for key in sorted(old_values.keys() | new_values.keys()):
@@ -228,8 +233,8 @@ class Episode:
                 "round": self.round,
                 "faultPlan": [fault.model_dump() for fault in self.faults],
                 "startFaults": self.start_faults,
-                "initialState": self.domain.state(self.initial_world),
-                "state": self.domain.state(self.world),
+                "initialState": self.domain.state(self.initial_world, self.initial_account),
+                "state": self.domain.state(self.world, self.account),
                 "calls": self.calls,
             })
 

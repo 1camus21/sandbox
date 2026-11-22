@@ -191,7 +191,7 @@ def create_app(*, admin_token: str | None = None, domains: list[Domain] | None =
     async def catalog(request: Request) -> Response:
         if not admin_authenticated(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return JSONResponse({"domains": {name: domain.scenes() for name, domain in registry.items()}})
+        return JSONResponse({"domains": {name: domain.worlds() for name, domain in registry.items()}})
 
     async def open_episode(request: Request) -> Response:
         if not admin_authenticated(request):
@@ -201,7 +201,7 @@ def create_app(*, admin_token: str | None = None, domains: list[Domain] | None =
         try:
             config = OpenEpisode.model_validate_json(await request.body())
             domain = registry.get(config.domain)
-            if domain is None or config.scene not in domain.scenes():
+            if domain is None or config.scene not in domain.worlds():
                 raise ValueError("unknown domain or scene")
             if config.account not in domain.accounts():
                 raise ValueError("unknown account")

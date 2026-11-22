@@ -16,43 +16,45 @@ class McDelivery:
     tools = json.loads(Path(__file__).with_name("tools.json").read_text(encoding="utf-8"))
     business_faults = frozenset({"SOLD_OUT", "STORE_CLOSED", "COUPON_INVALID"})
 
-    def scenes(self) -> list[str]:
+    def worlds(self) -> list[str]:
         return list_scenes()
 
     def accounts(self) -> list[str]:
         return list_accounts()
 
-    def open(self, scene: str, seed: int, account: str = DEFAULT_ACCOUNT) -> dict:
-        """世界（客观设施）与账户（用户状态）合并成一份运行时世界。
+    def load_world(self, world_id: str, seed: int) -> dict:
+        """加载世界：客观设施（门店、菜单）与变体，不含账户数据。"""
+        world = load_scene(world_id)
+        world.update(soldOut=[])
+        return apply_variant(world, seed)
+
+    def load_account(self, account_id: str | None, world: dict, seed: int) -> dict:
+        """加载账户：用户状态（地址、券、历史订单），并校验与世界之间的引用。
 
         只做引用完整性校验；地址不被覆盖、券在某店不可用都是合法状态，留给模型判断。
         """
-        world = load_scene(scene)
-        world.update(orders=[], quotes=[], invalidCoupons=[], soldOut=[])
-        user = load_account(account)
+        user = load_account(account_id or DEFAULT_ACCOUNT)
         self._check_references(world, user)
-        merged = {**apply_variant(world, seed), **apply_account_variant(user, seed)}
-        merged["accountId"] = user["accountId"]
-        merged["orders"] = deepcopy(user.get("orders") or [])
-        merged["quotes"] = deepcopy(user.get("quotes") or [])
-        merged["invalidCoupons"] = list(user.get("invalidCoupons") or [])
-        merged["soldOut"] = list(world.get("soldOut") or [])
-        return merged
+        account = apply_account_variant(user, seed)
+        account["orders"] = deepcopy(user.get("orders") or [])
+        account["quotes"] = deepcopy(user.get("quotes") or [])
+        account["invalidCoupons"] = list(user.get("invalidCoupons") or [])
+        return account
 
-    def state(self, world: dict) -> dict[str, dict]:
+    def state(self, world: dict, account: dict) -> dict[str, dict]:
         return {
             "clock": {"now": world["clock"]},
-            "addresses": {row["addressId"]: row for row in world["addresses"]},
+            "addresses": {row["addressId"]: row for row in account["addresses"]},
             "stores": {row["storeCode"]: row for row in world["stores"]},
             "menus": world["menus"],
-            "coupons": {row["couponId"]: row for row in world["coupons"]},
+            "coupons": {row["couponId"]: row for row in account["coupons"]},
             "soldOut": dict.fromkeys(world["soldOut"], True),
-            "invalidCoupons": dict.fromkeys(world["invalidCoupons"], True),
-            "quotes": {str(row["callSeq"]): row for row in world["quotes"]},
-            "orders": {row["orderId"]: row for row in world["orders"]},
+            "invalidCoupons": dict.fromkeys(account["invalidCoupons"], True),
+            "quotes": {str(row["callSeq"]): row for row in account["quotes"]},
+            "orders": {row["orderId"]: row for row in account["orders"]},
         }
 
-    def fault(self, world: dict, fault: Fault) -> None:
+    def fault(self, world: dict, account: dict, fault: Fault) -> None:
         target = fault.target
         if fault.type == "SOLD_OUT" and any(target in menu["meals"] for menu in world["menus"].values()):
             if target not in world["soldOut"]:
@@ -63,9 +65,9 @@ class McDelivery:
                 if store["storeCode"] == target:
                     store["forceClosed"] = True
                     return
-        if fault.type == "COUPON_INVALID" and any(coupon["couponId"] == target for coupon in world["coupons"]):
-            if target not in world["invalidCoupons"]:
-                world["invalidCoupons"].append(target)
+        if fault.type == "COUPON_INVALID" and any(coupon["couponId"] == target for coupon in account["coupons"]):
+            if target not in account["invalidCoupons"]:
+                account["invalidCoupons"].append(target)
             return
         raise ValueError(f"unknown target for {fault.type}: {target!r}")
 

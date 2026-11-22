@@ -72,7 +72,7 @@ def _store(ep: Episode, args: dict) -> dict:
 
 def delivery_query_addresses(ep: Episode, args: dict) -> Result:
     addresses = [{k: a[k] for k in ("addressId", "contactName", "phone", "fullAddress")}
-                 for a in ep.world["addresses"]]
+                 for a in ep.account["addresses"]]
     return envelope(ep, {"addresses": addresses})
 
 
@@ -85,14 +85,14 @@ def delivery_create_address(ep: Episode, args: dict) -> Result:
     phone = str(args["phone"]).strip()
     if not (phone.isdigit() and len(phone) == 11):
         raise ParamError("phone 必须是 11 位数字")
-    n = sum(1 for a in ep.world["addresses"] if a.get("created")) + 1
+    n = sum(1 for a in ep.account["addresses"] if a.get("created")) + 1
     address_id = f"1000000000000000000001{n:06d}"
     full = f"{args['city']}{args['address']} {args['addressDetail']}"
     record = {"addressId": address_id, "tag": None, "contactName": str(args["contactName"]),
               "phone": f"{phone[:3]}****{phone[-4:]}", "fullAddress": full, "created": True,
               "zone": ep.world.get("defaultAddressZone", "zone-a"),
               "createdAtCallSeq": ep.seq + 1}
-    ep.world["addresses"].append(record)
+    ep.account["addresses"].append(record)
     return envelope(ep, {k: record[k] for k in ("addressId", "contactName", "phone", "fullAddress")})
 
 
@@ -103,7 +103,7 @@ def delivery_query_stores(ep: Episode, args: dict) -> Result:
         raise ParamError("beType 仅支持 2（麦乐送）或 6（企业团餐）")
     if be_type == 6:
         raise ParamError("沙箱当前只支持麦乐送（beType=2）")
-    if W.find_address(ep.world, args["addressId"]) is None:
+    if W.find_address(ep.account, args["addressId"]) is None:
         return _fail(ep, "地址不存在，请先查询用户可配送地址列表", code=404)
     now = W.clock(ep.world)
     # 字段和顺序照真实录制：真实返回没有 address 字段（尽管说明文字里写了“门店地址”）
@@ -112,7 +112,7 @@ def delivery_query_stores(ep: Episode, args: dict) -> Result:
         "reservation": bool(s.get("reservation")), "reservationTimeOptions": W.reservation_options(s, now),
         "businessStatus": W.store_open(s, now),
         "businessStartTime": s["businessStartTime"], "businessEndTime": s["businessEndTime"],
-    } for s in W.stores_for_address(ep.world, args["addressId"])]
+    } for s in W.stores_for_address(ep.world, ep.account, args["addressId"])]
     return envelope(ep, stores)
 
 
@@ -153,8 +153,8 @@ def query_store_coupons(ep: Episode, args: dict) -> Result:
     meals = menu["meals"]
     day = now.strftime("%Y-%m-%d")
     data = []
-    for c in ep.world.get("coupons", []):
-        if not coupon_valid(c, now) or c["couponId"] in ep.world.get("invalidCoupons", []):
+    for c in ep.account.get("coupons", []):
+        if not coupon_valid(c, now) or c["couponId"] in ep.account.get("invalidCoupons", []):
             continue
         products = [{"productCode": p, "productName": meals[p]["name"]} for p in c["appliesTo"]
                     if p in meals and W.meal_available(menu, p, now)]
@@ -169,8 +169,8 @@ def query_my_coupons(ep: Episode, args: dict) -> Result:
     """保留优惠券列表的 Markdown 格式。"""
     now = W.clock(ep.world)
     coupons = [
-        coupon for coupon in ep.world["coupons"]
-        if coupon_valid(coupon, now) and coupon["couponId"] not in ep.world["invalidCoupons"]
+        coupon for coupon in ep.account["coupons"]
+        if coupon_valid(coupon, now) and coupon["couponId"] not in ep.account["invalidCoupons"]
     ]
     if not coupons:
         return RawText("# 您的优惠券列表\n\n暂无可用优惠券\n\n")
@@ -208,10 +208,11 @@ def calculate_price(ep: Episode, args: dict) -> Result:
     _delivery_mode(args)
     store = _store(ep, args)
     try:
-        priced = price_items(ep.world, store, args["items"], W.clock(ep.world), bool(args.get("needTableware")))
+        priced = price_items(ep.world, store, args["items"], W.clock(ep.world), bool(args.get("needTableware")),
+                             coupons=ep.account["coupons"], invalid_coupons=ep.account["invalidCoupons"])
     except PriceError as e:
         return _fail(ep, str(e))
-    ep.world["quotes"].append({
+    ep.account["quotes"].append({
         "callSeq": ep.seq + 1, "round": ep.round, "storeCode": store["storeCode"],
         "contentKey": priced.content_key, "items": [l.key() for l in priced.lines],
         "productFen": priced.product_price, "deliveryFen": priced.delivery_fen, "priceFen": priced.price,
@@ -224,7 +225,7 @@ def create_order(ep: Episode, args: dict) -> Result:
     _delivery_mode(args)
     _require(args, "addressId")
     store = _store(ep, args)
-    address = W.find_address(ep.world, args["addressId"])
+    address = W.find_address(ep.account, args["addressId"])
     if address is None:
         return _fail(ep, "配送地址不存在")
     now = W.clock(ep.world)
@@ -245,12 +246,13 @@ def create_order(ep: Episode, args: dict) -> Result:
         if not W.reservation_available(store, now, scheduled):
             return _fail(ep, "该门店或时段不支持预约配送")
     try:
-        priced = price_items(ep.world, store, args["items"], now, bool(args.get("needTableware")))
+        priced = price_items(ep.world, store, args["items"], now, bool(args.get("needTableware")),
+                             coupons=ep.account["coupons"], invalid_coupons=ep.account["invalidCoupons"])
     except PriceError as e:
         return _fail(ep, str(e))
-    last_quote = next((quote for quote in reversed(ep.world["quotes"])
+    last_quote = next((quote for quote in reversed(ep.account["quotes"])
                        if quote["contentKey"] == priced.content_key and quote["priceFen"] == priced.price), None)
-    n = len(ep.world["orders"]) + 1
+    n = len(ep.account["orders"]) + 1
     order = O.build_order(
         order_id=O.new_order_id(ep.scene_id, ep.account_id, ep.seed, n),
         pay_id=O.digits(f"pay:{ep.scene_id}:{ep.account_id}:{ep.seed}:{n}", 20),
@@ -260,12 +262,12 @@ def create_order(ep: Episode, args: dict) -> Result:
     order["reservationDate"] = reservation or None
     order["createdAtCallSeq"] = ep.seq + 1
     order["createdInRound"] = ep.round
-    ep.world["orders"].append(order)
+    ep.account["orders"].append(order)
     return envelope(ep, O.create_view(order))
 
 
 def _find_order(ep: Episode, order_id: Any) -> dict | None:
-    return next((o for o in ep.world["orders"] if o["orderId"] == str(order_id)), None)
+    return next((o for o in ep.account["orders"] if o["orderId"] == str(order_id)), None)
 
 
 def query_order(ep: Episode, args: dict) -> Result:
@@ -277,7 +279,7 @@ def query_order(ep: Episode, args: dict) -> Result:
 
 
 def order_list(ep: Episode, args: dict) -> Result:
-    recent = sorted(ep.world["orders"], key=lambda o: (o["createTime"], o.get("createdAtCallSeq", 0)),
+    recent = sorted(ep.account["orders"], key=lambda o: (o["createTime"], o.get("createdAtCallSeq", 0)),
                     reverse=True)[:10]
     return envelope(ep, {"list": [O.list_view(o) for o in recent]})
 
