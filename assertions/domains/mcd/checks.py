@@ -505,27 +505,14 @@ def _structured_checks(evidence: dict, spec: TaskSpec) -> tuple[Judgement, dict[
     return ctx, checks
 
 
-def judge(evidence: dict, quote: dict | None, spec: TaskSpec) -> dict:
-    unavailable = {"status": "unavailable", "checks": {}}
-    if (evidence["status"] != "complete" or not evidence["preflight"].get("verified")
-            or not evidence["sandbox"] or "state" not in evidence["iris"]
-            or not preflight_retained(evidence)):
-        return unavailable
-    try:
-        if spec.expect.calls is None:
-            ctx = build_context(evidence, quote, spec)
-            checks = _common_checks(ctx)
-            checks.update(_reply_common(ctx))
-        else:
-            ctx, checks = _structured_checks(evidence, spec)
-        for check_id in spec.expect.checks:
-            result = CHECKS[check_id](ctx)
-            if result is not None:
-                checks.update(result)
-    except (KeyError, TypeError, AttributeError, IndexError, StopIteration):
-        # An incomplete capture cannot establish a business verdict.
-        return unavailable
-    return {"status": "passed" if all(checks.values()) else "failed", "checks": checks}
+def evaluate_standard(evidence: dict, quote: dict | None, spec: TaskSpec) -> tuple[Judgement, dict[str, bool]]:
+    """执行默认检查集合，返回判定上下文与检查结果。"""
+    if spec.expect.calls is None:
+        ctx = build_context(evidence, quote, spec)
+        checks = _common_checks(ctx)
+        checks.update(_reply_common(ctx))
+        return ctx, checks
+    return _structured_checks(evidence, spec)
 
 
 if set(CHECKS) != set(CHECK_IDS):

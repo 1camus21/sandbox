@@ -110,6 +110,23 @@ BINDINGS = {
 WRITES = {"delivery-create-address", "create-order", "cancel-order"}
 
 
+class ChecksSpec(BaseModel):
+    """任务声明的检查组合。
+
+    use      默认包，缺省时使用领域默认包
+    all      必须全部通过
+    any      至少一个通过
+    optional 参与执行并记录，不影响总体结果
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    use: list[str] | None = None
+    all: list[str] = Field(default_factory=list)
+    any: list[str] = Field(default_factory=list)
+    optional: list[str] = Field(default_factory=list)
+
+
 class ExpectSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -120,14 +137,15 @@ class ExpectSpec(BaseModel):
     # Version 1 task files and recorded scenario views.
     orders: int = 0
     quote: bool = True
-    checks: list[str] = Field(default_factory=list)
+    checks: ChecksSpec = Field(default_factory=ChecksSpec)
 
-    @field_validator("checks")
+    @field_validator("checks", mode="before")
     @classmethod
-    def _known_checks(cls, value: list[str]) -> list[str]:
-        unknown = [check for check in value if check not in CHECK_IDS]
-        if unknown:
-            raise ValueError(f"unknown check: {', '.join(unknown)}")
+    def _normalize_checks(cls, value):
+        if value is None:
+            return {}
+        if isinstance(value, list):
+            return {"all": value}
         return value
 
 
@@ -258,7 +276,7 @@ def legacy_view(spec: TaskSpec) -> dict:
         "quoteAfterInteraction": spec.script.quoteAfterInteraction or any(
             step.tool == "calculate-price" and step.afterInteraction for step in calls or []
         ),
-        "checks": list(spec.expect.checks),
+        "checks": spec.expect.checks.model_dump(exclude_none=True),
         "scene": spec.env.scene,
         "account": spec.env.account,
         "seed": spec.env.seed,

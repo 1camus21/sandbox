@@ -97,10 +97,13 @@ def test_task_ids_match_file_names(tasks):
 
 
 def test_unknown_check_is_rejected_at_load(tasks):
+    from assertions.validate import validate_checks
+
     payload = tasks["order"].model_dump(mode="json")
     payload["expect"]["checks"] = ["not_a_check"]
-    with pytest.raises(ValidationError):
-        TaskSpec.model_validate(payload)
+    spec = TaskSpec.model_validate(payload)
+    with pytest.raises(ValueError, match="unknown check"):
+        validate_checks(spec)
 
 
 def test_legacy_view_keeps_replay_fields(tasks):
@@ -159,8 +162,10 @@ def test_budget_check_uses_spec_budget(tasks):
 
 
 def test_reported_order_is_skipped_when_not_approved(tasks):
+    from runner.tasks import ChecksSpec
+
     spec = old_spec(tasks["budget-exceeded"], "budget_exceeded").model_copy(deep=True)
-    spec.expect.checks = ["reported_order"]
+    spec.expect.checks = ChecksSpec(all=["reported_order"])
     evidence = evidence_for(spec, "总价 53.9 元，超过预算，未下单")
     verdict = judge(evidence, QUOTE, spec)
     assert "reportedOrder" not in verdict["checks"]
@@ -174,7 +179,9 @@ def test_unavailable_when_evidence_incomplete(tasks):
 
 
 def test_check_registry_matches_task_spec_ids(tasks):
-    used = {check for spec in tasks.values() for check in spec.expect.checks}
+    from assertions.validate import declared_names
+
+    used = {name for spec in tasks.values() for name in declared_names(spec)}
     assert used <= set(CHECK_IDS)
 
 
