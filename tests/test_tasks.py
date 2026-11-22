@@ -225,3 +225,20 @@ def test_step_domain_accepts_declared_domain():
     }
     spec = TaskSpec.model_validate(payload)
     assert spec.expect.calls[0].domain == "echo"
+
+
+def test_unknown_tool_for_known_domain_is_rejected():
+    payload = {"taskId": "t", "script": {"prompt": "p"},
+               "expect": {"calls": [{"id": "x", "tool": "not-a-tool"}]}}
+    with pytest.raises(ValidationError, match="unknown tool"):
+        TaskSpec.model_validate(payload)
+
+
+def test_unregistered_domain_skips_tool_whitelist():
+    payload = {
+        "taskId": "t", "script": {"prompt": "p"},
+        "env": {"domains": [{"name": "echo", "scene": "default", "account": "guest"}]},
+        "expect": {"calls": [{"id": "x", "tool": "echo-say"}]},
+    }
+    spec = TaskSpec.model_validate(payload)
+    assert spec.expect.calls[0].tool == "echo-say"

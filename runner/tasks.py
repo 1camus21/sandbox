@@ -13,7 +13,8 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator, model_validator
 
-from runner.contract import INTENTS, ORDER_TOOL, READ_TOOLS
+from runner.contract import INTENTS
+from sandbox.domains.registry import manifest_for
 from sandbox.episodes import Fault
 
 TASKS_DIR = Path(__file__).resolve().parents[1] / "tasks"
@@ -79,7 +80,7 @@ class CallSpec(BaseModel):
     tool: str
     domain: str | None = None
     args: dict[str, StrictStr | StrictInt | StrictBool] = Field(default_factory=dict)
-    bind: dict[Literal["addressId", "storeCode", "orderId"], str] = Field(default_factory=dict)
+    bind: dict[str, str] = Field(default_factory=dict)
     addressTag: str | None = None
     menuProduct: str | None = None
     afterInteraction: str | None = None
@@ -110,14 +111,6 @@ class ReplySpec(BaseModel):
     fromCalls: list[str] = Field(default_factory=list)
     noAddressQuestion: bool = False
     noOrderClaim: bool = False
-
-
-BINDINGS = {
-    "addressId": {"delivery-query-addresses"},
-    "storeCode": {"delivery-query-stores", "query-meals", "calculate-price"},
-    "orderId": {"create-order"},
-}
-WRITES = {"delivery-create-address", "create-order", "cancel-order"}
 
 
 class ChecksSpec(BaseModel):
@@ -188,6 +181,9 @@ class TaskSpec(BaseModel):
                 step.domain = names[0]
             elif step.domain not in names:
                 raise ValueError(f"unknown domain for step {step.id}: {step.domain}")
+        manifests = {name: manifest_for(name) for name in names}
+        manifests = {name: item for name, item in manifests.items() if item is not None}
+        approval_tools = {tool for item in manifests.values() for tool in item.approval_tools}
         actions = {action.actionId for action in self.script.interactions}
         if len(actions) != len(self.script.interactions):
             raise ValueError("repeated interaction ID")
@@ -195,28 +191,35 @@ class TaskSpec(BaseModel):
                for action in self.script.interactions):
             raise ValueError("script.interactions must reference known intents")
         for step in calls:
-            if step.tool not in READ_TOOLS | WRITES:
+            manifest = manifests.get(step.domain)
+            if manifest is not None and step.tool not in manifest.tools:
                 raise ValueError(f"unknown tool: {step.tool}")
-            if step.addressTag and step.tool != "delivery-query-addresses":
-                raise ValueError("addressTag requires delivery-query-addresses")
-            if step.menuProduct and step.tool != "query-meals":
-                raise ValueError("menuProduct requires query-meals")
+            for attr, allowed in (manifest.field_tools.items() if manifest else ()):
+                if getattr(step, attr) and step.tool not in allowed:
+                    raise ValueError(f"{attr} requires {', '.join(sorted(allowed))}")
             if step.afterInteraction and step.afterInteraction not in actions:
                 raise ValueError(f"unknown interaction: {step.afterInteraction}")
             if step.withinBudget and self.script.budgetFen is None:
                 raise ValueError("withinBudget requires script.budgetFen")
-            if step.outcome != "success" and step.tool != "create-order":
+            if step.outcome != "success" and (manifest is None or step.tool not in manifest.timeout_tools):
                 raise ValueError("only create-order supports a timeout outcome")
+            rules = manifest.bindings if manifest is not None else {}
             for field, ref in step.bind.items():
-                if ref not in steps or steps[ref].tool not in BINDINGS[field]:
+                if manifest is not None and field not in rules:
+                    raise ValueError(f"invalid binding: {step.id}.{field} from {ref}")
+                if ref not in steps or (manifest is not None and steps[ref].tool not in rules[field]):
                     raise ValueError(f"invalid binding: {step.id}.{field} from {ref}")
         for step in calls:
-            if step.tool == ORDER_TOOL:
-                quote = steps.get(step.bind.get("storeCode"))
-                if "addressId" not in step.bind or quote is None or quote.tool != "calculate-price":
-                    raise ValueError("create-order must bind an address lookup and quote")
-            if step.tool == "cancel-order" and "orderId" not in step.bind:
-                raise ValueError("cancel-order must bind a create-order receipt")
+            manifest = manifests.get(step.domain)
+            if manifest is None:
+                continue
+            for field in manifest.required_bindings.get(step.tool, ()):
+                if field not in step.bind:
+                    raise ValueError(f"invalid binding: {step.id}.{field} is required")
+            for field, allowed in manifest.binding_sources.get(step.tool, {}).items():
+                ref = step.bind.get(field)
+                if ref is None or steps[ref].tool not in allowed:
+                    raise ValueError(f"invalid binding: {step.id}.{field} from {ref}")
         resolved = set()
         while outstanding := {step.id for step in calls if step.id not in resolved}:
             ready = {key for key in outstanding if set(steps[key].bind.values()) <= resolved}
@@ -227,9 +230,9 @@ class TaskSpec(BaseModel):
         if len(approved_steps) != len(set(approved_steps)):
             raise ValueError("repeated approval call")
         for ref in approved_steps:
-            if ref not in steps or steps[ref].tool not in {"create-order", "cancel-order"}:
+            if ref not in steps or steps[ref].tool not in approval_tools:
                 raise ValueError(f"approval must reference an order write: {ref}")
-        if {step.id for step in calls if step.tool in {"create-order", "cancel-order"}} != set(approved_steps):
+        if {step.id for step in calls if step.tool in approval_tools} != set(approved_steps):
             raise ValueError("order writes require a scripted approval")
         for ref in self.expect.reply.fromCalls:
             if ref not in steps:
