@@ -5,7 +5,7 @@ import pytest
 
 from assertions.preflight import preflight_retained, probe_succeeded
 from runner.domains import DOMAINS, get_domain, task_domains
-from runner.domains import weibo as weibo_domain
+from runner.domains import weibo_cli
 from runner.domains.weibo import FAR_FUTURE, read_token, write_credentials
 from runner.tasks import TaskSpec
 
@@ -83,9 +83,9 @@ def test_direct_tokens(monkeypatch, tmp_path):
 
 def test_prepare_command_writes_a_fresh_token(tmp_path, capsys):
     path = tmp_path / "auth.json"
-    assert weibo_domain.main(["--credentials", str(path)]) == 0
+    assert weibo_cli.main(["--credentials", str(path)]) == 0
     first = read_token(path)
-    assert weibo_domain.main(["--credentials", str(path)]) == 0
+    assert weibo_cli.main(["--credentials", str(path)]) == 0
     assert read_token(path) not in {None, first}
     out = capsys.readouterr().out
     assert "SANDBOX_EPISODE_ID=" in out and f"WEIBO_MCP_URL={SANDBOX}/mcp\n" in out
