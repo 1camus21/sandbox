@@ -23,6 +23,7 @@ import psycopg
 
 from monitor.qwen import api_key
 from runner.__main__ import run_case, save, source_revision
+from runner.domains import get_domain, task_domains
 from runner.report import save_report, summarize
 from runner.tasks import load_tasks
 from sandbox.config import load_local_env
@@ -156,26 +157,33 @@ def collect_case(case: Case, *, batch: Path, jar: Path, iris_env: dict, sandbox_
     episode_id, mcp_token = token_hex(16), token_hex(24)
     task = TASKS[case.scenario]
     mode = "active" if task.script.interactions else "off"
-    case_env = dict(iris_env, MCD_MCP_URL=f"{sandbox_url}/mcp/{episode_id}/1", MCD_MCP_TOKEN=mcp_token)
+    domains = [get_domain(name) for name in task_domains(task)]
     log = batch / f"{case.label}.log"
     result = {"index": case.index, "scenario": case.scenario, "episodeId": episode_id,
               "startedAt": started, "log": log.name}
     try:
-        with TemporaryDirectory(prefix="iris-regression-") as work, running(
-            ["java", "-Dfile.encoding=UTF-8", "-jar", str(jar), "--server.address=127.0.0.1",
-             "--server.port=0", "--spring.sql.init.mode=never", "--iris.memory.daily-note.cron=-"],
-            cwd=Path(work), env=case_env, log=log, processes=processes,
-        ) as iris:
-            iris_url = wait_ready(iris, log, IRIS_PORT, IRIS_PROBE)
-            evidence = run_case(task, iris_url=iris_url + "/api", sandbox_url=sandbox_url,
-                                admin_token=admin_token, mcp_token=mcp_token, episode_id=episode_id,
-                                seed=seed, monitor_mode=mode, key=key if mode == "active" else "")
-            evidence["provenance"].update(provenance)
-            save(batch / case.label, evidence)
-            result.update(evidence=f"{case.label}/evidence.json", summary=f"{case.label}/summary.json")
-            summary = summarize(evidence)
-            result.update({field: summary[field] for field in
-                           ("verdict", "status", "failedChecks", "errors", "diagnostics")})
+        with TemporaryDirectory(prefix="iris-regression-") as work:
+            # 连接方式由领域决定：麦乐送注入令牌，微博先在工作目录写授权文件。
+            # 多领域任务用按领域的端点，每个助手只看到本领域的工具。
+            case_env = dict(iris_env)
+            for domain in domains:
+                case_env.update(domain.connect_iris(sandbox_url, episode_id, mcp_token, Path(work),
+                                                    scoped=len(domains) > 1))
+            with running(
+                ["java", "-Dfile.encoding=UTF-8", "-jar", str(jar), "--server.address=127.0.0.1",
+                 "--server.port=0", "--spring.sql.init.mode=never", "--iris.memory.daily-note.cron=-"],
+                cwd=Path(work), env=case_env, log=log, processes=processes,
+            ) as iris:
+                iris_url = wait_ready(iris, log, IRIS_PORT, IRIS_PROBE)
+                evidence = run_case(task, iris_url=iris_url + "/api", sandbox_url=sandbox_url,
+                                    admin_token=admin_token, mcp_token=mcp_token, episode_id=episode_id,
+                                    seed=seed, monitor_mode=mode, key=key if mode == "active" else "")
+                evidence["provenance"].update(provenance)
+                save(batch / case.label, evidence)
+                result.update(evidence=f"{case.label}/evidence.json", summary=f"{case.label}/summary.json")
+                summary = summarize(evidence)
+                result.update({field: summary[field] for field in
+                               ("verdict", "status", "failedChecks", "errors", "diagnostics")})
     except KeyboardInterrupt:
         result.update(verdict="unavailable", status="interrupted")
     except Exception as error:
