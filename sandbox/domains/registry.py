@@ -3,10 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sandbox.domains.mcd.manifest import (
-    APPROVAL_TOOLS, BINDING_SOURCES, BINDINGS, FIELD_TOOLS, READ_TOOLS,
-    REQUIRED_BINDINGS, TIMEOUT_TOOLS, WRITE_TOOLS,
-)
+from sandbox.domains.mcd import manifest as mcd
+from sandbox.domains.weibo import manifest as weibo
 
 
 @dataclass(frozen=True)
@@ -26,18 +24,23 @@ class DomainManifest:
         return self.read_tools | self.write_tools
 
 
+def _manifest(name: str, module) -> DomainManifest:
+    return DomainManifest(
+        name=name,
+        read_tools=module.READ_TOOLS,
+        write_tools=module.WRITE_TOOLS,
+        bindings=module.BINDINGS,
+        required_bindings=module.REQUIRED_BINDINGS,
+        approval_tools=module.APPROVAL_TOOLS,
+        timeout_tools=module.TIMEOUT_TOOLS,
+        field_tools=module.FIELD_TOOLS,
+        binding_sources=module.BINDING_SOURCES,
+    )
+
+
 MANIFESTS: dict[str, DomainManifest] = {
-    "mcd": DomainManifest(
-        name="mcd",
-        read_tools=READ_TOOLS,
-        write_tools=WRITE_TOOLS,
-        bindings=BINDINGS,
-        required_bindings=REQUIRED_BINDINGS,
-        approval_tools=APPROVAL_TOOLS,
-        timeout_tools=TIMEOUT_TOOLS,
-        field_tools=FIELD_TOOLS,
-        binding_sources=BINDING_SOURCES,
-    ),
+    "mcd": _manifest("mcd", mcd),
+    "weibo": _manifest("weibo", weibo),
 }
 
 
