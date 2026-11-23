@@ -105,14 +105,17 @@ def test_management_auth_and_token_isolation(client):
     assert tool(client, "create-order", ORDER).status_code == 401
     first = start(client)
     second = start(client, token="second-mcd")
-    assert client.post("/admin/episodes", headers=ADMIN, json={"token": MCP_TOKEN}).status_code == 409
-    assert client.post("/admin/episodes", headers=ADMIN, json={"token": "x", "scene": "../tools"}).status_code == 400
+    assert client.post("/admin/episodes", headers=ADMIN,
+                       json={"token": MCP_TOKEN, "clock": "2026-11-10 12:00:00"}).status_code == 409
+    assert client.post("/admin/episodes", headers=ADMIN,
+                       json={"token": "x", "scene": "../tools", "clock": "2026-11-10 12:00:00"}).status_code == 400
     assert tool(client, "order-list", Origin="https://invalid.example").status_code == 403
     assert body(tool(client, "create-order", ORDER))["success"] is True
     assert not admin(client, second, "snapshot").json()["calls"]
     assert admin(client, first, "close", "POST").json()["closed"] is True
     assert tool(client, "order-list").status_code == 401
-    assert client.post("/admin/episodes", headers=ADMIN, json={"token": MCP_TOKEN}).status_code == 409
+    assert client.post("/admin/episodes", headers=ADMIN,
+                       json={"token": MCP_TOKEN, "clock": "2026-11-10 12:00:00"}).status_code == 409
     third = start(client, token="third-mcd")
     assert first != third
     assert not admin(client, third, "snapshot").json()["state"]["orders"]
@@ -165,7 +168,8 @@ def test_reset_and_round_change_wait_for_admitted_post():
         async with app.router.lifespan_context(app):
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as http:
-                response = await http.post("/admin/episodes", headers=ADMIN, json={"token": MCP_TOKEN})
+                response = await http.post("/admin/episodes", headers=ADMIN,
+                                           json={"token": MCP_TOKEN, "clock": "2026-11-10 12:00:00"})
                 episode = response.raise_for_status().json()["episodeId"]
                 base = f"/admin/episodes/{episode}"
                 request = asyncio.create_task(http.post("/mcp", headers=headers, content=delayed_body()))
@@ -217,7 +221,7 @@ def test_disconnected_client_records_planned_status_without_response():
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as http:
                 response = await http.post("/admin/episodes", headers=ADMIN, json={
-                    "token": MCP_TOKEN, "faults": [{
+                    "token": MCP_TOKEN, "clock": "2026-11-10 12:00:00", "faults": [{
                         "type": "TIMEOUT_COMMITTED", "tool": "create-order", "delaySeconds": 0.15,
                     }],
                 })
@@ -259,7 +263,8 @@ def test_closed_episode_can_be_listed_and_purged(client):
     assert client.delete(path, headers=ADMIN).status_code == 409
     admin(client, run_id, "close", "POST")
     rows = client.get("/admin/episodes", headers=ADMIN).raise_for_status().json()["episodes"]
-    assert rows == [{"episodeId": run_id, "closed": True, "domain": "mcd", "scene": "lunch"}]
+    assert rows == [{"episodeId": run_id, "closed": True, "domain": "mcd",
+                     "domains": ["mcd"], "scene": "lunch"}]
     assert client.delete(path, headers=ADMIN).status_code == 204
     assert client.get(f"{path}/snapshot", headers=ADMIN).status_code == 404
 
@@ -345,14 +350,15 @@ def test_episode_open_is_idempotent_and_old_credentials_cannot_write(client):
     from uuid import uuid4
 
     episode_id = uuid4().hex
-    payload = {"episodeId": episode_id, "token": MCP_TOKEN}
+    payload = {"episodeId": episode_id, "token": MCP_TOKEN, "clock": "2026-11-10 12:00:00"}
     assert client.post("/admin/episodes", headers=ADMIN, json=payload).status_code == 201
     retry = client.post("/admin/episodes", headers=ADMIN, json=payload)
     assert retry.status_code == 200 and retry.json()["episodeId"] == episode_id
     assert client.post("/admin/episodes", headers=ADMIN, json={**payload, "seed": 2}).status_code == 409
     admin(client, episode_id, "close", "POST")
     assert client.post("/admin/episodes", headers=ADMIN, json=payload).status_code == 200
-    assert client.post("/admin/episodes", headers=ADMIN, json={"token": MCP_TOKEN}).status_code == 409
+    assert client.post("/admin/episodes", headers=ADMIN,
+                       json={"token": MCP_TOKEN, "clock": "2026-11-10 12:00:00"}).status_code == 409
 
     current = start(client, token="current")
     old_url = f"/mcp/{episode_id}/1"
@@ -385,7 +391,8 @@ def test_retired_token_remains_retired_after_archived_episode_is_deleted(tmp_pat
         admin(http, episode, "close", "POST")
         assert http.delete(f"/admin/episodes/{episode}", headers=ADMIN).status_code == 204
     with TestClient(create_app(admin_token="test-admin", archive_dir=tmp_path), base_url="http://localhost") as http:
-        assert http.post("/admin/episodes", headers=ADMIN, json={"token": MCP_TOKEN}).status_code == 409
+        assert http.post("/admin/episodes", headers=ADMIN,
+                         json={"token": MCP_TOKEN, "clock": "2026-11-10 12:00:00"}).status_code == 409
 
 
 def test_reservation_is_consistent_in_order_receipts(client):

@@ -97,10 +97,13 @@ def test_task_ids_match_file_names(tasks):
 
 
 def test_unknown_check_is_rejected_at_load(tasks):
+    from assertions.validate import validate_checks
+
     payload = tasks["order"].model_dump(mode="json")
     payload["expect"]["checks"] = ["not_a_check"]
-    with pytest.raises(ValidationError):
-        TaskSpec.model_validate(payload)
+    spec = TaskSpec.model_validate(payload)
+    with pytest.raises(ValueError, match="unknown check"):
+        validate_checks(spec)
 
 
 def test_legacy_view_keeps_replay_fields(tasks):
@@ -159,8 +162,10 @@ def test_budget_check_uses_spec_budget(tasks):
 
 
 def test_reported_order_is_skipped_when_not_approved(tasks):
+    from runner.tasks import ChecksSpec
+
     spec = old_spec(tasks["budget-exceeded"], "budget_exceeded").model_copy(deep=True)
-    spec.expect.checks = ["reported_order"]
+    spec.expect.checks = ChecksSpec(all=["reported_order"])
     evidence = evidence_for(spec, "总价 53.9 元，超过预算，未下单")
     verdict = judge(evidence, QUOTE, spec)
     assert "reportedOrder" not in verdict["checks"]
@@ -174,7 +179,9 @@ def test_unavailable_when_evidence_incomplete(tasks):
 
 
 def test_check_registry_matches_task_spec_ids(tasks):
-    used = {check for spec in tasks.values() for check in spec.expect.checks}
+    from assertions.validate import declared_names
+
+    used = {name for spec in tasks.values() for name in declared_names(spec)}
     assert used <= set(CHECK_IDS)
 
 
@@ -189,3 +196,87 @@ def test_invalid_call_binding_is_rejected_at_load(tasks, field, value):
 def test_compatibility_view_round_trips_current_spec(tasks):
     for task in tasks.values():
         assert _task_from_view(legacy_view(task)).digest() == task.digest()
+
+
+def test_step_domain_defaults_to_primary_domain():
+    spec = TaskSpec.model_validate({
+        "taskId": "t", "script": {"prompt": "p"},
+        "env": {"clock": "2026-11-10 12:00:00"},
+        "expect": {"calls": [{"id": "time", "tool": "now-time-info"}]},
+    })
+    assert spec.expect.calls[0].domain == "mcd"
+
+
+def test_step_domain_must_be_declared():
+    payload = {
+        "taskId": "t", "script": {"prompt": "p"},
+        "env": {"clock": "2026-11-10 12:00:00",
+                "domains": [{"name": "mcd", "scene": "lunch", "account": "alice"}]},
+        "expect": {"calls": [{"id": "time", "tool": "now-time-info", "domain": "echo"}]},
+    }
+    with pytest.raises(ValidationError, match="unknown domain"):
+        TaskSpec.model_validate(payload)
+
+
+def test_step_domain_accepts_declared_domain():
+    payload = {
+        "taskId": "t", "script": {"prompt": "p"},
+        "env": {"clock": "2026-11-10 12:00:00",
+                "domains": [{"name": "mcd", "scene": "lunch", "account": "alice"},
+                            {"name": "echo", "scene": "default", "account": "guest"}]},
+        "expect": {"calls": [{"id": "time", "tool": "now-time-info", "domain": "echo"}]},
+    }
+    spec = TaskSpec.model_validate(payload)
+    assert spec.expect.calls[0].domain == "echo"
+
+
+def test_unknown_tool_for_known_domain_is_rejected():
+    payload = {"taskId": "t", "script": {"prompt": "p"},
+               "env": {"clock": "2026-11-10 12:00:00"},
+               "expect": {"calls": [{"id": "x", "tool": "not-a-tool"}]}}
+    with pytest.raises(ValidationError, match="unknown tool"):
+        TaskSpec.model_validate(payload)
+
+
+def test_unregistered_domain_skips_tool_whitelist():
+    payload = {
+        "taskId": "t", "script": {"prompt": "p"},
+        "env": {"clock": "2026-11-10 12:00:00",
+                "domains": [{"name": "echo", "scene": "default", "account": "guest"}]},
+        "expect": {"calls": [{"id": "x", "tool": "echo-say"}]},
+    }
+    spec = TaskSpec.model_validate(payload)
+    assert spec.expect.calls[0].tool == "echo-say"
+
+
+def test_state_can_be_declared_per_domain():
+    base = load_tasks(TASKS_DIR / "20261119T2229")["s0-order-create"]
+    payload = base.model_dump(mode="json", by_alias=True)
+    payload["taskId"] = "t"
+    payload["expect"]["state"] = {"mcd": payload["expect"]["state"]}
+    rebuilt = TaskSpec.model_validate(payload)
+    assert rebuilt.expect.state.for_domain("mcd").order is not None
+    assert rebuilt.expect.orders == 1
+
+
+def test_state_domain_must_be_declared():
+    base = load_tasks(TASKS_DIR / "20261119T2229")["s0-order-create"]
+    payload = base.model_dump(mode="json", by_alias=True)
+    payload["taskId"] = "t"
+    payload["expect"]["state"] = {"echo": {"order": payload["expect"]["state"]["order"]}}
+    with pytest.raises(ValidationError, match="unknown domain in state"):
+        TaskSpec.model_validate(payload)
+
+
+def test_task_can_declare_inline_world():
+    from runner.batch import task_env
+
+    payload = {
+        "taskId": "t", "script": {"prompt": "p"},
+        "env": {"clock": "2026-11-10 12:00:00",
+                "domains": [{"name": "mcd", "worldInline": {"stores": [], "menus": {}}}]},
+    }
+    spec = TaskSpec.model_validate(payload)
+    assert task_env(spec)["worlds"] == {"mcd": "@inline"}
+    assert task_env(spec)["inlineWorlds"] == ["mcd"]
+    assert task_env(spec)["clock"] == "2026-11-10 12:00:00"

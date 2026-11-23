@@ -49,20 +49,20 @@ def store_open(store: dict, now: datetime) -> bool:
 
 # ---------- 地址与门店 ----------
 
-def find_address(world: dict, address_id: str) -> dict | None:
-    return next((a for a in world["addresses"] if a["addressId"] == str(address_id)), None)
+def find_address(account: dict, address_id: str) -> dict | None:
+    return next((a for a in account["addresses"] if a["addressId"] == str(address_id)), None)
 
 
 def find_store(world: dict, store_code: str) -> dict | None:
     return next((s for s in world["stores"] if s["storeCode"] == str(store_code)), None)
 
 
-def stores_for_address(world: dict, address_id: str) -> list[dict]:
+def stores_for_address(world: dict, account: dict, address_id: str) -> list[dict]:
     """能配送到该地址的门店（含已打烊的，营业状态由 businessStatus 体现）。
 
     「能不能送到」由地址的 zone 与门店 coverage 决定；地址不存在或没有门店覆盖时返回空列表。
     """
-    address = find_address(world, address_id)
+    address = find_address(account, address_id)
     if address is None:
         return []
     return [s for s in world["stores"] if store_covers(s, address)]

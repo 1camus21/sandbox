@@ -8,7 +8,7 @@ from uuid import uuid4
 import httpx
 
 from monitor import Recognizer
-from runner.assertions import CallMatches
+from assertions.domains.mcd.matches import CallMatches
 from runner.clients import Iris, Sandbox, pending_approvals
 from runner.contract import (
     CANARY_PROMPT, CANARY_TOOL, DEFAULT_QUOTE_ITEMS, ORDER_BUDGET_FEN, ORDER_TOOL, READ_TOOLS, RECOVERY_PROMPT,
@@ -37,7 +37,8 @@ def _task_from_view(view: dict) -> TaskSpec:
         version=view.get("version", 1),
         capability=view.get("capability"),
         env={"scene": view.get("scene", "lunch"), "account": view.get("account", "alice"),
-             "seed": view.get("seed", 0)},
+             "seed": view.get("seed", 0), "clock": view.get("clock"),
+             **({"domains": view["domains"]} if view.get("domains") else {})},
         faults=view.get("faults", []),
         script={
             "prompt": view["prompt"],

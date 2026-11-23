@@ -685,14 +685,14 @@ def test_live_concurrent_lookup_does_not_count_as_post_timeout(client):
 
 @pytest.mark.parametrize("entry", ["spec", "name", "view"])
 def test_address_canary_does_not_count_as_a_formal_address_lookup(client, sandbox_client, entry):
-    from runner.tasks import load_tasks
+    from runner.tasks import load_all_tasks
 
     class AnswerWithoutLookup(FakeIris):
         def answer(self, user_id):
             return "共两个配送地址，标签是公司和家。"
 
     name = "s0-address-query"
-    task = {"spec": load_tasks()[name], "name": name, "view": SCENARIOS[name]}[entry]
+    task = {"spec": load_all_tasks()[name], "name": name, "view": SCENARIOS[name]}[entry]
     fake = AnswerWithoutLookup(client, name)
     with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as iris_http:
         evidence = run_episode(task, Iris(iris_http), sandbox_client)
@@ -710,7 +710,7 @@ def test_legacy_without_quote_requirement_keeps_false(client, sandbox_client, mo
             return "有公司地址。"
 
     name = "legacy-read-only"
-    view = {"prompt": "查地址", "taskId": name, "quote": False}
+    view = {"prompt": "查地址", "taskId": name, "quote": False, "clock": "2026-11-10 12:00:00"}
     monkeypatch.setitem(SCENARIOS, name, view)
     fake = OldReadOnly(client, name)
     with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as iris_http:
@@ -874,7 +874,7 @@ def test_approval_limit_still_yields_a_business_failure_when_ledger_was_captured
 
 
 def test_order_reply_cannot_use_a_query_that_completed_after_it(client, sandbox_client):
-    from runner.tasks import load_tasks
+    from runner.tasks import load_all_tasks
     from runner.verdict import judge
 
     fake = FakeIris(client, "s0-order-query")
@@ -884,7 +884,7 @@ def test_order_reply_cannot_use_a_query_that_completed_after_it(client, sandbox_
     query, = [call for call in evidence["sandbox"]["calls"] if call["request"]["tool"] == "query-order"]
     query["transport"]["completedAt"] = "9999-01-01T00:00:00+00:00"
 
-    verdict = judge(evidence, None, load_tasks()[fake.name])
+    verdict = judge(evidence, None, load_all_tasks()[fake.name])
     assert verdict["status"] == "failed"
     assert verdict["checks"]["call.query"]
     assert verdict["checks"]["reportedOrder"] is False

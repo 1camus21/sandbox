@@ -2,6 +2,7 @@ taskId: s0-order-create
 version: 2
 capability: tool-contract
 env:
+  clock: "2026-11-10 12:00:00"
   scene: lunch
   account: alice
   seed: 0

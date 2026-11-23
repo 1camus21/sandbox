@@ -224,3 +224,7 @@ __marimo__/
 
 # macOS Finder metadata
 .DS_Store
+
+/pytest-of-33994/
+/.pytest-tmp/
+/pytest-cache-files-*/

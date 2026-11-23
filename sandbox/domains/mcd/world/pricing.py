@@ -201,17 +201,17 @@ def coupon_valid(coupon: dict, now: datetime) -> bool:
     return start <= t <= end
 
 
-def _resolve_coupon(world: dict, item: dict, product_code: str, now: datetime) -> dict | None:
+def _resolve_coupon(coupons: list, invalid_coupons: list, item: dict, product_code: str, now: datetime) -> dict | None:
     cid, ccode = item.get("couponId"), item.get("couponCode")
     if not cid and not ccode:
         return None
-    coupon = next((c for c in world.get("coupons", [])
+    coupon = next((c for c in coupons
                    if (cid and c["couponId"] == str(cid)) or (not cid and c["couponCode"] == str(ccode))), None)
     if coupon is None or (ccode and coupon["couponCode"] != str(ccode)):
         raise PriceError("优惠券不存在或 couponId 与 couponCode 不匹配")
     if product_code not in coupon["appliesTo"]:
         raise PriceError(f"优惠券「{coupon['title']}」不适用于商品 {product_code}")
-    if not coupon_valid(coupon, now) or coupon["couponId"] in world.get("invalidCoupons", []):
+    if not coupon_valid(coupon, now) or coupon["couponId"] in invalid_coupons:
         raise PriceError(f"优惠券「{coupon['title']}」当前不可用")
     return coupon
 
@@ -247,8 +247,16 @@ def packing_fee(store: dict, lines: list[Line]) -> tuple[int, int]:
     return original, min(original, int(cap))
 
 
-def price_items(world: dict, store: dict, raw_items: Any, now: datetime, need_tableware: bool = False) -> Priced:
-    """算价。商品不可售、售罄、子项不合法、券不可用都会抛 PriceError。"""
+def price_items(world: dict, store: dict, raw_items: Any, now: datetime, need_tableware: bool = False,
+                *, coupons: list | None = None, invalid_coupons: list | None = None) -> Priced:
+    """算价。商品不可售、售罄、子项不合法、券不可用都会抛 PriceError。
+
+    coupons / invalid_coupons 缺省时从 world 读取，兼容调用方传入的合并视图。
+    """
+    if coupons is None:
+        coupons = world.get("coupons", [])
+    if invalid_coupons is None:
+        invalid_coupons = world.get("invalidCoupons", [])
     items = parse_items(raw_items)
     menu = W.store_menu(world, store)
     sold_out = set(world.get("soldOut", []))
@@ -271,7 +279,7 @@ def price_items(world: dict, store: dict, raw_items: Any, now: datetime, need_ta
             raise PriceError("当前场景不支持单品特调，请使用菜单提供的套餐子项")
         detail = menu.get("details", {}).get(code)
         choices, extra = _resolve_choices(detail, item.get("roundList"), code)
-        coupon = _resolve_coupon(world, item, code, now)
+        coupon = _resolve_coupon(coupons, invalid_coupons, item, code, now)
         name = (detail or {}).get("name") or (menu.get("calcNames") or {}).get(code) or meal["name"]
         line = Line(code, name, qty, fen_of(meal["currentPrice"]) + extra, choices, coupon,
                     modification=item.get("modification"), product_type=meal.get("productType"))

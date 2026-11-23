@@ -11,7 +11,9 @@ from uuid import uuid4
 
 import yaml
 
-from runner.tasks import TASKS_DIR, TaskSpec, load_tasks
+from assertions.load import load_checks
+from assertions.validate import validate_checks
+from runner.tasks import TASKS_DIR, EnvDomain, TaskSpec, load_tasks
 
 
 def new_batch_id(now: datetime | None = None) -> str:
@@ -43,17 +45,58 @@ def _spec_payload(spec: TaskSpec) -> dict:
     return spec.model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
-def prepare(plan: BatchPlan, tasks: dict[str, TaskSpec], out_root: Path) -> dict:
+def task_env(spec: TaskSpec) -> dict:
+    """任务声明的领域、世界与账户；未声明 domains 时按单领域 mcd 处理。"""
+    entries = spec.env.domains or [
+        EnvDomain(name="mcd", scene=spec.env.scene, account=spec.env.account)]
+    names = [entry.name for entry in entries]
+    if len(set(names)) != len(names):
+        raise ValueError(f"{spec.taskId}: repeated domain")
+    return {
+        "domains": names,
+        "clock": spec.env.clock,
+        "worlds": {entry.name: ("@inline" if entry.worldInline is not None else entry.scene)
+                   for entry in entries},
+        "accounts": {entry.name: ("@inline" if entry.accountInline is not None else entry.account)
+                     for entry in entries},
+        "inlineWorlds": [entry.name for entry in entries if entry.worldInline is not None],
+    }
+
+
+def validate(plan: BatchPlan, tasks: dict[str, TaskSpec], *, task_set_dir: Path | None = None) -> list[str]:
+    """批次级校验：收集全部问题，不遇错即停。"""
+    if task_set_dir is not None:
+        load_checks(Path(task_set_dir) / "checks.py")
+    task_ids = plan.tasks or tuple(sorted(tasks))
+    problems: list[str] = []
+    if not task_ids:
+        problems.append("task set has no tasks")
+    for task_id in task_ids:
+        spec = tasks.get(task_id)
+        if spec is None:
+            problems.append(f"unknown task: {task_id}")
+            continue
+        try:
+            task_env(spec)
+        except ValueError as error:
+            problems.append(f"{task_id}: {error}")
+        try:
+            validate_checks(spec)
+        except ValueError as error:
+            problems.append(f"{task_id}: {error}")
+    return problems
+
+
+def prepare(plan: BatchPlan, tasks: dict[str, TaskSpec], out_root: Path,
+            *, task_set_dir: Path | None = None) -> dict:
     """创建批次目录，冻结任务定义，写入初始清单。
 
     计划未显式列出任务时，使用任务集目录里的全部任务。
     """
+    problems = validate(plan, tasks, task_set_dir=task_set_dir)
+    if problems:
+        raise ValueError("batch validation failed:\n" + "\n".join(problems))
     task_ids = plan.tasks or tuple(sorted(tasks))
-    if not task_ids:
-        raise ValueError("task set has no tasks")
-    unknown = [task_id for task_id in task_ids if task_id not in tasks]
-    if unknown:
-        raise ValueError(f"unknown tasks: {', '.join(unknown)}")
     batch_dir = out_root / plan.batch_id
     specs_dir = batch_dir / "specs"
     specs_dir.mkdir(parents=True, exist_ok=True)
@@ -63,7 +106,7 @@ def prepare(plan: BatchPlan, tasks: dict[str, TaskSpec], out_root: Path) -> dict
         (specs_dir / f"{task_id}.yaml").write_text(
             yaml.safe_dump(_spec_payload(spec), allow_unicode=True, sort_keys=False),
             encoding="utf-8")
-        entries.append({"taskId": task_id, "specSha256": spec.digest()})
+        entries.append({"taskId": task_id, "specSha256": spec.digest(), **task_env(spec)})
     manifest = {
         "batchId": plan.batch_id,
         "name": plan.name,
@@ -71,6 +114,11 @@ def prepare(plan: BatchPlan, tasks: dict[str, TaskSpec], out_root: Path) -> dict
         "seed": plan.seed,
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "tasks": entries,
+        "domains": sorted({name for entry in entries for name in entry["domains"]}),
+        "worlds": {
+            name: sorted({entry["worlds"][name] for entry in entries if name in entry["worlds"]})
+            for name in {name for entry in entries for name in entry["worlds"]}
+        },
         "runs": [],
         "counts": {"planned": len(task_ids), "completed": 0, "passed": 0,
                    "failed": 0, "unavailable": 0, "errored": 0},
@@ -116,6 +164,7 @@ def run_manifest(run_id: str, task: TaskSpec, evidence: dict) -> dict:
     return {
         "runId": run_id,
         "taskId": task.taskId,
+        "domains": task_env(task)["domains"],
         "verdict": verdict,
         "status": evidence.get("status"),
         "failedChecks": sorted(name for name, ok in checks.items() if ok is False),
@@ -144,11 +193,22 @@ def main(argv: list[str] | None = None) -> int:
     aggregate_parser.add_argument("--batch", type=Path, required=True,
                                   help="批次目录，例如 runs/b-20261119-abcd")
 
+    validate_parser = sub.add_parser("validate", help="只校验批次与任务，不创建批次目录")
+    validate_parser.add_argument("--plan", type=Path, required=True)
+    validate_parser.add_argument("--tasks-dir", type=Path, default=TASKS_DIR)
+
     args = parser.parse_args(argv)
     if args.action == "prepare":
         plan = load_plan(args.plan)
-        manifest = prepare(plan, load_tasks(args.tasks_dir), args.out)
+        manifest = prepare(plan, load_tasks(args.tasks_dir), args.out, task_set_dir=args.tasks_dir)
         print(f"{plan.batch_id} planned={manifest['counts']['planned']} -> {args.out / plan.batch_id}")
+    elif args.action == "validate":
+        plan = load_plan(args.plan)
+        problems = validate(plan, load_tasks(args.tasks_dir), task_set_dir=args.tasks_dir)
+        for problem in problems:
+            print(problem)
+        print(json.dumps({"problems": len(problems)}, ensure_ascii=False))
+        return 1 if problems else 0
     else:
         manifest = aggregate(args.batch)
         print(json.dumps(manifest["counts"], ensure_ascii=False))

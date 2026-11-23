@@ -3,30 +3,12 @@
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
+from assertions.primitives.calls import completed_by, data_of, request_of, successful
 from runner.contract import DEFAULT_QUOTE_ITEMS, ORDER_TOOL, READ_TOOLS
 from runner.tasks import CallSpec, TaskSpec
 from sandbox.domains.mcd.handlers import ParamError, _as_int
 from sandbox.domains.mcd.world.orders import CANCEL_REASONS
 from sandbox.domains.mcd.world.pricing import PriceError, price_items
-
-
-def data_of(call: dict):
-    result = call["business"]["result"]
-    return result.get("data") if isinstance(result, dict) else result
-
-
-def request_of(call: dict) -> dict:
-    return call["request"]["arguments"]
-
-
-def successful(call: dict) -> bool:
-    return (call["business"]["success"] is True and call["transport"]["state"] == "emitted"
-            and call["transport"]["httpStatus"] == 200)
-
-
-def completed_by(call: dict, at: str | None) -> bool:
-    completed = call["transport"].get("completedAt")
-    return at is None or bool(completed and completed <= at)
 
 
 def argument_matches(field: str, actual, expected) -> bool:
@@ -267,7 +249,7 @@ class CallMatches:
 
     def state_checks(self, order_id: str | None, over_budget: bool) -> dict[str, bool]:
         initial = self.snapshot["initialState"]
-        expected = self.spec.expect.state
+        expected = self.spec.expect.state.for_domain("mcd")
         base = {key for key in initial if key not in {"orders", "addresses", "quotes"}}
         checks = {"otherBusinessState": all(initial[key] == self.state[key] for key in base)}
         quote_calls = {str(call["seq"]) for call in self.snapshot["calls"]

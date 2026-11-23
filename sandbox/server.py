@@ -28,9 +28,19 @@ from starlette.routing import Mount, Route
 
 from sandbox.config import load_local_env
 from sandbox.domains.mcd import McDelivery
-from sandbox.episodes import Domain, EpisodeConflict, EpisodeStore, Fault, HTTP_FAULTS
+from sandbox.episodes import Domain, DomainConfig, EpisodeConflict, EpisodeStore, Fault, HTTP_FAULTS
 
 log = logging.getLogger(__name__)
+
+
+class OpenDomain(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(pattern=r"^[a-z0-9_-]{1,32}$")
+    scene: str = Field(default="lunch", min_length=1, max_length=64)
+    account: str | None = Field(default=None, pattern=r"^[a-z0-9_-]{1,32}$")
+    worldInline: dict | None = None
+    accountInline: dict | None = None
 
 
 class OpenEpisode(BaseModel):
@@ -42,7 +52,9 @@ class OpenEpisode(BaseModel):
     scene: str = "lunch"
     account: str = Field(default="alice", pattern=r"^[a-z0-9_-]{1,32}$")
     seed: int = 0
+    clock: str | None = None
     faults: list[Fault] = Field(default_factory=list)
+    domains: list[OpenDomain] | None = None
 
 
 class SetRound(BaseModel):
@@ -66,14 +78,23 @@ def create_app(*, admin_token: str | None = None, domains: list[Domain] | None =
 
     @server.list_tools()
     async def tools() -> list[types.Tool]:
-        episode = server.request_context.request.scope["sandbox.episode"]
-        return [types.Tool.model_validate(tool) for tool in episode.domain.tools]
+        scope = server.request_context.request.scope
+        episode = scope["sandbox.episode"]
+        name = scope.get("sandbox.domain")
+        entries = (episode.domains[name].tools if name is not None
+                   else [tool for domain in episode.domains.values() for tool in domain.tools])
+        return [types.Tool.model_validate(tool) for tool in entries]
 
     @server.call_tool(validate_input=False)
     async def call(name: str, arguments: dict) -> types.CallToolResult:
         context = server.request_context
         scope = context.request.scope
         episode = scope["sandbox.episode"]
+        endpoint = scope.get("sandbox.domain")
+        if endpoint is not None and episode.tool_domains.get(name) != endpoint:
+            return types.CallToolResult(content=[types.TextContent(
+                type="text", text="Tool is not available on this endpoint",
+            )], isError=True)
         meta = context.meta.model_dump(by_alias=True, exclude_none=True) if context.meta is not None else None
         if meta and (meta.get("runId", episode.episode_id) != episode.episode_id
                      or meta.get("generation", episode.generation) != episode.generation):
@@ -108,19 +129,30 @@ def create_app(*, admin_token: str | None = None, domains: list[Domain] | None =
             return
         path = scope["path"].rstrip("/")
         scoped = re.fullmatch(r"/mcp/([0-9a-f]{32})/([1-9][0-9]{0,9})", path)
-        if path not in ("", "/mcp") and not scoped:
+        domain_scoped = re.fullmatch(r"/mcp/([0-9a-f]{32})/([a-z][a-z0-9_-]{0,31})/([1-9][0-9]{0,9})", path)
+        if path not in ("", "/mcp") and not scoped and not domain_scoped:
             await JSONResponse({"error": "not found"}, status_code=404)(scope, receive, send)
             return
+        if domain_scoped:
+            episode_id_path, domain_name, generation = domain_scoped[1], domain_scoped[2], int(domain_scoped[3])
+        elif scoped:
+            episode_id_path, domain_name, generation = scoped[1], None, int(scoped[2])
+        else:
+            episode_id_path, domain_name, generation = None, None, None
+        scope["sandbox.domain"] = domain_name
         token = bearer(Headers(scope=scope))
         scope["sandbox.admitted_at"] = monotonic_ns()
         admitted = scope["method"] == "POST"
-        episode_scope = (scoped[1], int(scoped[2])) if scoped else None
+        episode_scope = (episode_id_path, generation) if episode_id_path else None
         episode = store.admit(token, episode_scope) if admitted else store.bound(token)
         if episode is None or (not admitted and (episode_scope or (episode.episode_id, 1))
                                != (episode.episode_id, episode.generation)):
             await JSONResponse({"error": "no active episode for bearer token"}, status_code=401)(
                 scope, receive, send,
             )
+            return
+        if domain_name is not None and domain_name not in episode.domains:
+            await JSONResponse({"error": "unknown domain"}, status_code=404)(scope, receive, send)
             return
         scope["sandbox.episode"] = episode
 
@@ -191,7 +223,7 @@ def create_app(*, admin_token: str | None = None, domains: list[Domain] | None =
     async def catalog(request: Request) -> Response:
         if not admin_authenticated(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return JSONResponse({"domains": {name: domain.scenes() for name, domain in registry.items()}})
+        return JSONResponse({"domains": {name: domain.worlds() for name, domain in registry.items()}})
 
     async def open_episode(request: Request) -> Response:
         if not admin_authenticated(request):
@@ -200,15 +232,24 @@ def create_app(*, admin_token: str | None = None, domains: list[Domain] | None =
             return JSONResponse({"episodes": store.list()})
         try:
             config = OpenEpisode.model_validate_json(await request.body())
-            domain = registry.get(config.domain)
-            if domain is None or config.scene not in domain.scenes():
-                raise ValueError("unknown domain or scene")
-            if config.account not in domain.accounts():
-                raise ValueError("unknown account")
+            entries = config.domains or [
+                OpenDomain(name=config.domain, scene=config.scene, account=config.account)]
+            configs = []
+            for entry in entries:
+                domain = registry.get(entry.name)
+                if domain is None:
+                    raise ValueError(f"unknown domain: {entry.name}")
+                if entry.worldInline is None and entry.scene not in domain.worlds():
+                    raise ValueError(f"unknown world: {entry.name}/{entry.scene}")
+                if entry.accountInline is None and entry.account is not None and entry.account not in domain.accounts():
+                    raise ValueError(f"unknown account: {entry.account}")
+                configs.append(DomainConfig(domain=domain, scene=entry.scene, account=entry.account,
+                                            world_inline=entry.worldInline,
+                                            account_inline=entry.accountInline))
             if compare_digest(config.token, admin_token):
                 raise ValueError("episode and admin tokens must differ")
-            episode_id, created = store.create(config.token, domain, config.scene, config.seed, config.faults,
-                                               config.episodeId, config.account)
+            episode_id, created = store.create(config.token, configs, config.seed, config.faults,
+                                               config.episodeId, config.clock)
         except ValidationError as error:
             return JSONResponse({"errors": error.errors(include_input=False, include_context=False)}, status_code=400)
         except ValueError as error:

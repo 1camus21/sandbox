@@ -13,7 +13,8 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator, model_validator
 
-from runner.contract import INTENTS, ORDER_TOOL, READ_TOOLS
+from runner.contract import INTENTS
+from sandbox.domains.registry import manifest_for
 from sandbox.episodes import Fault
 
 TASKS_DIR = Path(__file__).resolve().parents[1] / "tasks"
@@ -27,12 +28,24 @@ CHECK_IDS = (
 )
 
 
+class EnvDomain(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    scene: str = "lunch"
+    account: str = "alice"
+    worldInline: dict[str, Any] | None = None
+    accountInline: dict[str, Any] | None = None
+
+
 class EnvSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    clock: str | None = None
     scene: str = "lunch"
     account: str = "alice"
     seed: int = 0
+    domains: list[EnvDomain] | None = None
 
 
 class InteractionSpec(BaseModel):
@@ -68,8 +81,9 @@ class CallSpec(BaseModel):
 
     id: str
     tool: str
+    domain: str | None = None
     args: dict[str, StrictStr | StrictInt | StrictBool] = Field(default_factory=dict)
-    bind: dict[Literal["addressId", "storeCode", "orderId"], str] = Field(default_factory=dict)
+    bind: dict[str, str] = Field(default_factory=dict)
     addressTag: str | None = None
     menuProduct: str | None = None
     afterInteraction: str | None = None
@@ -92,6 +106,28 @@ class StateSpec(BaseModel):
 
     order: OrderSpec | None = None
     address: EntitySpec | None = None
+    domains: dict[str, "StateSpec"] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _split_domains(cls, value):
+        """允许 {mcd: {...}, echo: {...}} 的按领域写法。"""
+        if not isinstance(value, dict):
+            return value
+        known = {"order", "address", "domains"}
+        extra = {key: item for key, item in value.items() if key not in known}
+        if not extra:
+            return value
+        rest = {key: item for key, item in value.items() if key in known}
+        rest["domains"] = extra
+        return rest
+
+    def for_domain(self, name: str) -> "StateSpec":
+        if name in self.domains:
+            return self.domains[name]
+        if not self.domains:
+            return self
+        return StateSpec()
 
 
 class ReplySpec(BaseModel):
@@ -102,12 +138,21 @@ class ReplySpec(BaseModel):
     noOrderClaim: bool = False
 
 
-BINDINGS = {
-    "addressId": {"delivery-query-addresses"},
-    "storeCode": {"delivery-query-stores", "query-meals", "calculate-price"},
-    "orderId": {"create-order"},
-}
-WRITES = {"delivery-create-address", "create-order", "cancel-order"}
+class ChecksSpec(BaseModel):
+    """任务声明的检查组合。
+
+    use      默认包，缺省时使用领域默认包
+    all      必须全部通过
+    any      至少一个通过
+    optional 参与执行并记录，不影响总体结果
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    use: list[str] | None = None
+    all: list[str] = Field(default_factory=list)
+    any: list[str] = Field(default_factory=list)
+    optional: list[str] = Field(default_factory=list)
 
 
 class ExpectSpec(BaseModel):
@@ -120,14 +165,15 @@ class ExpectSpec(BaseModel):
     # Version 1 task files and recorded scenario views.
     orders: int = 0
     quote: bool = True
-    checks: list[str] = Field(default_factory=list)
+    checks: ChecksSpec = Field(default_factory=ChecksSpec)
 
-    @field_validator("checks")
+    @field_validator("checks", mode="before")
     @classmethod
-    def _known_checks(cls, value: list[str]) -> list[str]:
-        unknown = [check for check in value if check not in CHECK_IDS]
-        if unknown:
-            raise ValueError(f"unknown check: {', '.join(unknown)}")
+    def _normalize_checks(cls, value):
+        if value is None:
+            return {}
+        if isinstance(value, list):
+            return {"all": value}
         return value
 
 
@@ -152,6 +198,17 @@ class TaskSpec(BaseModel):
         steps = {step.id: step for step in calls}
         if len(steps) != len(calls):
             raise ValueError("repeated call ID")
+        names = [entry.name for entry in self.env.domains] if self.env.domains else ["mcd"]
+        if len(set(names)) != len(names):
+            raise ValueError("repeated domain")
+        for step in calls:
+            if step.domain is None:
+                step.domain = names[0]
+            elif step.domain not in names:
+                raise ValueError(f"unknown domain for step {step.id}: {step.domain}")
+        manifests = {name: manifest_for(name) for name in names}
+        manifests = {name: item for name, item in manifests.items() if item is not None}
+        approval_tools = {tool for item in manifests.values() for tool in item.approval_tools}
         actions = {action.actionId for action in self.script.interactions}
         if len(actions) != len(self.script.interactions):
             raise ValueError("repeated interaction ID")
@@ -159,28 +216,35 @@ class TaskSpec(BaseModel):
                for action in self.script.interactions):
             raise ValueError("script.interactions must reference known intents")
         for step in calls:
-            if step.tool not in READ_TOOLS | WRITES:
+            manifest = manifests.get(step.domain)
+            if manifest is not None and step.tool not in manifest.tools:
                 raise ValueError(f"unknown tool: {step.tool}")
-            if step.addressTag and step.tool != "delivery-query-addresses":
-                raise ValueError("addressTag requires delivery-query-addresses")
-            if step.menuProduct and step.tool != "query-meals":
-                raise ValueError("menuProduct requires query-meals")
+            for attr, allowed in (manifest.field_tools.items() if manifest else ()):
+                if getattr(step, attr) and step.tool not in allowed:
+                    raise ValueError(f"{attr} requires {', '.join(sorted(allowed))}")
             if step.afterInteraction and step.afterInteraction not in actions:
                 raise ValueError(f"unknown interaction: {step.afterInteraction}")
             if step.withinBudget and self.script.budgetFen is None:
                 raise ValueError("withinBudget requires script.budgetFen")
-            if step.outcome != "success" and step.tool != "create-order":
+            if step.outcome != "success" and (manifest is None or step.tool not in manifest.timeout_tools):
                 raise ValueError("only create-order supports a timeout outcome")
+            rules = manifest.bindings if manifest is not None else {}
             for field, ref in step.bind.items():
-                if ref not in steps or steps[ref].tool not in BINDINGS[field]:
+                if manifest is not None and field not in rules:
+                    raise ValueError(f"invalid binding: {step.id}.{field} from {ref}")
+                if ref not in steps or (manifest is not None and steps[ref].tool not in rules[field]):
                     raise ValueError(f"invalid binding: {step.id}.{field} from {ref}")
         for step in calls:
-            if step.tool == ORDER_TOOL:
-                quote = steps.get(step.bind.get("storeCode"))
-                if "addressId" not in step.bind or quote is None or quote.tool != "calculate-price":
-                    raise ValueError("create-order must bind an address lookup and quote")
-            if step.tool == "cancel-order" and "orderId" not in step.bind:
-                raise ValueError("cancel-order must bind a create-order receipt")
+            manifest = manifests.get(step.domain)
+            if manifest is None:
+                continue
+            for field in manifest.required_bindings.get(step.tool, ()):
+                if field not in step.bind:
+                    raise ValueError(f"invalid binding: {step.id}.{field} is required")
+            for field, allowed in manifest.binding_sources.get(step.tool, {}).items():
+                ref = step.bind.get(field)
+                if ref is None or steps[ref].tool not in allowed:
+                    raise ValueError(f"invalid binding: {step.id}.{field} from {ref}")
         resolved = set()
         while outstanding := {step.id for step in calls if step.id not in resolved}:
             ready = {key for key in outstanding if set(steps[key].bind.values()) <= resolved}
@@ -191,18 +255,22 @@ class TaskSpec(BaseModel):
         if len(approved_steps) != len(set(approved_steps)):
             raise ValueError("repeated approval call")
         for ref in approved_steps:
-            if ref not in steps or steps[ref].tool not in {"create-order", "cancel-order"}:
+            if ref not in steps or steps[ref].tool not in approval_tools:
                 raise ValueError(f"approval must reference an order write: {ref}")
-        if {step.id for step in calls if step.tool in {"create-order", "cancel-order"}} != set(approved_steps):
+        if {step.id for step in calls if step.tool in approval_tools} != set(approved_steps):
             raise ValueError("order writes require a scripted approval")
         for ref in self.expect.reply.fromCalls:
             if ref not in steps:
                 raise ValueError(f"unknown reply call: {ref}")
-        for entity, tool in ((self.expect.state.order, "create-order"),
-                             (self.expect.state.address, "delivery-create-address")):
+        for name in self.expect.state.domains:
+            if name not in names:
+                raise ValueError(f"unknown domain in state: {name}")
+        state = self.expect.state.for_domain(names[0])
+        for entity, tool in ((state.order, "create-order"),
+                             (state.address, "delivery-create-address")):
             if entity and (entity.call not in steps or steps[entity.call].tool != tool):
                 raise ValueError(f"state must reference {tool}")
-        self.expect.orders = int(self.expect.state.order is not None)
+        self.expect.orders = int(state.order is not None)
         self.expect.quote = any(step.tool == "calculate-price" for step in calls)
         return self
 
@@ -229,6 +297,14 @@ def load_tasks(directory: Path = TASKS_DIR) -> dict[str, TaskSpec]:
     return tasks
 
 
+def load_all_tasks(directory: Path = TASKS_DIR) -> dict[str, TaskSpec]:
+    """根目录的旧场景 + 各任务集目录里的任务，供按任务标识查找的兼容层使用。"""
+    tasks = load_tasks(directory)
+    for path in sorted(Path(directory).glob("*/task-set.json")):
+        tasks.update(load_tasks(path.parent))
+    return tasks
+
+
 def legacy_view(spec: TaskSpec) -> dict:
     """供证据回放与旧工具读取的字典视图。"""
     expect = spec.expect
@@ -250,8 +326,10 @@ def legacy_view(spec: TaskSpec) -> dict:
         "quoteAfterInteraction": spec.script.quoteAfterInteraction or any(
             step.tool == "calculate-price" and step.afterInteraction for step in calls or []
         ),
-        "checks": list(spec.expect.checks),
+        "checks": spec.expect.checks.model_dump(exclude_none=True),
         "scene": spec.env.scene,
         "account": spec.env.account,
         "seed": spec.env.seed,
+        "clock": spec.env.clock,
+        **({"domains": [entry.model_dump() for entry in spec.env.domains]} if spec.env.domains else {}),
     }
