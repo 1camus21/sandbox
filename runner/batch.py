@@ -54,6 +54,7 @@ def task_env(spec: TaskSpec) -> dict:
         raise ValueError(f"{spec.taskId}: repeated domain")
     return {
         "domains": names,
+        "clock": spec.env.clock,
         "worlds": {entry.name: ("@inline" if entry.worldInline is not None else entry.scene)
                    for entry in entries},
         "accounts": {entry.name: ("@inline" if entry.accountInline is not None else entry.account)

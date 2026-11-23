@@ -68,7 +68,8 @@ class Sandbox:
         episode_id = episode_id or uuid4().hex
         payload = {
             "episodeId": episode_id,
-            "token": self.token, "domain": "mcd", "scene": scene,
+            "token": self.token,
+            "domain": "mcd", "scene": scene,
             "account": account, "seed": seed, "faults": faults,
         }
         if clock:

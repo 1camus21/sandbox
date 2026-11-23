@@ -22,23 +22,29 @@ def test_default_account_and_snapshot_fields(client):
 
 
 def test_unknown_account_is_rejected(client):
-    response = client.post("/admin/episodes", headers=ADMIN, json={"token": "t-unknown", "account": "ghost"})
+    response = client.post("/admin/episodes", headers=ADMIN,
+                           json={"token": "t-unknown", "account": "ghost",
+                                 "clock": "2026-11-10 12:00:00"})
     assert response.status_code == 400
     assert "unknown account" in response.json()["error"]
 
 
 def test_invalid_account_slug_is_rejected(client):
-    response = client.post("/admin/episodes", headers=ADMIN, json={"token": "t-bad", "account": "Alice!"})
+    response = client.post("/admin/episodes", headers=ADMIN,
+                           json={"token": "t-bad", "account": "Alice!",
+                                 "clock": "2026-11-10 12:00:00"})
     assert response.status_code == 400
 
 
 def test_same_episode_id_with_different_account_conflicts(client):
     episode_id = "a" * 32
     first = client.post("/admin/episodes", headers=ADMIN,
-                        json={"token": "t-idem-1", "episodeId": episode_id, "account": "alice"})
+                        json={"token": "t-idem-1", "episodeId": episode_id, "account": "alice",
+                              "clock": "2026-11-10 12:00:00"})
     assert first.status_code == 201
     second = client.post("/admin/episodes", headers=ADMIN,
-                         json={"token": "t-idem-2", "episodeId": episode_id, "account": "bob"})
+                         json={"token": "t-idem-2", "episodeId": episode_id, "account": "bob",
+                               "clock": "2026-11-10 12:00:00"})
     assert second.status_code == 409
 
 

@@ -2,6 +2,7 @@ taskId: clarify-drink
 version: 2
 capability: clarification
 env:
+  clock: "2026-11-10 12:00:00"
   scene: lunch
   account: alice
   seed: 0

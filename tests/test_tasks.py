@@ -201,6 +201,7 @@ def test_compatibility_view_round_trips_current_spec(tasks):
 def test_step_domain_defaults_to_primary_domain():
     spec = TaskSpec.model_validate({
         "taskId": "t", "script": {"prompt": "p"},
+        "env": {"clock": "2026-11-10 12:00:00"},
         "expect": {"calls": [{"id": "time", "tool": "now-time-info"}]},
     })
     assert spec.expect.calls[0].domain == "mcd"
@@ -209,7 +210,8 @@ def test_step_domain_defaults_to_primary_domain():
 def test_step_domain_must_be_declared():
     payload = {
         "taskId": "t", "script": {"prompt": "p"},
-        "env": {"domains": [{"name": "mcd", "scene": "lunch", "account": "alice"}]},
+        "env": {"clock": "2026-11-10 12:00:00",
+                "domains": [{"name": "mcd", "scene": "lunch", "account": "alice"}]},
         "expect": {"calls": [{"id": "time", "tool": "now-time-info", "domain": "echo"}]},
     }
     with pytest.raises(ValidationError, match="unknown domain"):
@@ -219,7 +221,8 @@ def test_step_domain_must_be_declared():
 def test_step_domain_accepts_declared_domain():
     payload = {
         "taskId": "t", "script": {"prompt": "p"},
-        "env": {"domains": [{"name": "mcd", "scene": "lunch", "account": "alice"},
+        "env": {"clock": "2026-11-10 12:00:00",
+                "domains": [{"name": "mcd", "scene": "lunch", "account": "alice"},
                             {"name": "echo", "scene": "default", "account": "guest"}]},
         "expect": {"calls": [{"id": "time", "tool": "now-time-info", "domain": "echo"}]},
     }
@@ -229,6 +232,7 @@ def test_step_domain_accepts_declared_domain():
 
 def test_unknown_tool_for_known_domain_is_rejected():
     payload = {"taskId": "t", "script": {"prompt": "p"},
+               "env": {"clock": "2026-11-10 12:00:00"},
                "expect": {"calls": [{"id": "x", "tool": "not-a-tool"}]}}
     with pytest.raises(ValidationError, match="unknown tool"):
         TaskSpec.model_validate(payload)
@@ -237,7 +241,8 @@ def test_unknown_tool_for_known_domain_is_rejected():
 def test_unregistered_domain_skips_tool_whitelist():
     payload = {
         "taskId": "t", "script": {"prompt": "p"},
-        "env": {"domains": [{"name": "echo", "scene": "default", "account": "guest"}]},
+        "env": {"clock": "2026-11-10 12:00:00",
+                "domains": [{"name": "echo", "scene": "default", "account": "guest"}]},
         "expect": {"calls": [{"id": "x", "tool": "echo-say"}]},
     }
     spec = TaskSpec.model_validate(payload)
@@ -268,9 +273,10 @@ def test_task_can_declare_inline_world():
 
     payload = {
         "taskId": "t", "script": {"prompt": "p"},
-        "env": {"domains": [{"name": "mcd", "worldInline": {
-            "clock": "2026-11-10 12:00:00", "stores": [], "menus": {}}}]},
+        "env": {"clock": "2026-11-10 12:00:00",
+                "domains": [{"name": "mcd", "worldInline": {"stores": [], "menus": {}}}]},
     }
     spec = TaskSpec.model_validate(payload)
     assert task_env(spec)["worlds"] == {"mcd": "@inline"}
     assert task_env(spec)["inlineWorlds"] == ["mcd"]
+    assert task_env(spec)["clock"] == "2026-11-10 12:00:00"

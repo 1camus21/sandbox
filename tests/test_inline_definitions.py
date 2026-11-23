@@ -6,10 +6,10 @@ from sandbox.episodes import DomainConfig, Episode
 
 def test_inline_world_is_used():
     data = load_scene("lunch")
-    data["clock"] = "2026-11-10 13:30:00"
     data["stores"] = data["stores"][:1]
 
-    episode = Episode([DomainConfig(McDelivery(), "lunch", "alice", world_inline=data)], 0, [])
+    episode = Episode([DomainConfig(McDelivery(), "lunch", "alice", world_inline=data)], 0, [],
+                      clock="2026-11-10 13:30:00")
 
     snapshot = episode.snapshot()
     assert len(episode.world["stores"]) == 1
@@ -24,7 +24,8 @@ def test_inline_account_is_used():
                        "contactName": "Carol", "phone": "138****0000", "fullAddress": "示例路 1 号"}],
     }
 
-    episode = Episode([DomainConfig(McDelivery(), "lunch", None, account_inline=account)], 0, [])
+    episode = Episode([DomainConfig(McDelivery(), "lunch", None, account_inline=account)], 0, [],
+                      clock="2026-11-10 12:00:00")
 
     assert episode.account_id == "carol"
     assert [row["addressId"] for row in episode.account["addresses"]] == ["addr-1"]

@@ -33,8 +33,9 @@ def patch_account(monkeypatch, account: dict) -> None:
     monkeypatch.setattr(mcd_module, "load_account", lambda name: json.loads(json.dumps(account)))
 
 
-def episode(domain, *, scene="lunch", seed=0, faults=None, account="alice") -> Episode:
-    return Episode([DomainConfig(domain, scene, account)], seed, faults or [])
+def episode(domain, *, scene="lunch", seed=0, faults=None, account="alice",
+            clock="2026-11-10 12:00:00") -> Episode:
+    return Episode([DomainConfig(domain, scene, account)], seed, faults or [], clock=clock)
 
 
 def test_accounts_and_scenes_are_discoverable(domain):

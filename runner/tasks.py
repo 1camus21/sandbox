@@ -41,10 +41,10 @@ class EnvDomain(BaseModel):
 class EnvSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    clock: str | None = None
     scene: str = "lunch"
     account: str = "alice"
     seed: int = 0
-    clock: str | None = None
     domains: list[EnvDomain] | None = None
 
 

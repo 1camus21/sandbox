@@ -152,7 +152,8 @@ def test_prepare_rejects_repeated_domain(workdir):
     spec = TaskSpec.model_validate({
         "taskId": "dup",
         "script": {"prompt": "p"},
-        "env": {"domains": [{"name": "mcd"}, {"name": "mcd"}]},
+        "env": {"clock": "2026-11-10 12:00:00",
+                "domains": [{"name": "mcd"}, {"name": "mcd"}]},
     })
     with pytest.raises(ValueError, match="repeated domain"):
         prepare(load_plan(_write_plan(workdir, ["dup"])), {"dup": spec}, workdir / "runs")
@@ -170,7 +171,9 @@ def test_validate_loads_task_set_checks(workdir):
         "    return True\n",
         encoding="utf-8")
     (task_dir / "t.yaml").write_text(
-        "taskId: t\nscript:\n  prompt: p\nexpect:\n  checks:\n    all: [s0.wired]\n",
+        "taskId: t\nscript:\n  prompt: p\n"
+        "env:\n  clock: \"2026-11-10 12:00:00\"\n"
+        "expect:\n  checks:\n    all: [s0.wired]\n",
         encoding="utf-8")
     plan = BatchPlan(batch_id="b-test", name="n", task_set_id="taskset", tasks=("t",))
 

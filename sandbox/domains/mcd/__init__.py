@@ -66,8 +66,6 @@ class McDelivery:
         world.setdefault("soldOut", [])
         world.setdefault("stores", [])
         world.setdefault("menus", {})
-        if "clock" not in world:
-            raise ValueError("inline world needs clock")
         return world
 
     def load_inline_account(self, data: dict, world: dict, seed: int) -> dict:

@@ -7,7 +7,8 @@ from runner.tasks import TaskSpec
 
 
 def task(checks=None) -> TaskSpec:
-    payload = {"taskId": "t", "script": {"prompt": "p"}}
+    payload = {"taskId": "t", "script": {"prompt": "p"},
+               "env": {"clock": "2026-11-10 12:00:00"}}
     if checks is not None:
         payload["expect"] = {"checks": checks}
     return TaskSpec.model_validate(payload)
@@ -84,13 +85,15 @@ def test_validate_rejects_check_domains_not_declared():
     registry.register(mixed)
     only_mcd = TaskSpec.model_validate({
         "taskId": "t", "script": {"prompt": "p"},
+        "env": {"clock": "2026-11-10 12:00:00"},
         "expect": {"checks": {"all": ["test.mixed"]}},
     })
     with pytest.raises(ValueError, match="requires domains: echo"):
         validate_checks(only_mcd)
     both = TaskSpec.model_validate({
         "taskId": "t", "script": {"prompt": "p"},
-        "env": {"domains": [{"name": "mcd"}, {"name": "echo"}]},
+        "env": {"clock": "2026-11-10 12:00:00",
+                "domains": [{"name": "mcd"}, {"name": "echo"}]},
         "expect": {"checks": {"all": ["test.mixed"]}},
     })
     validate_checks(both)

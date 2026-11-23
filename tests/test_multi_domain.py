@@ -57,6 +57,7 @@ class EchoDomain:
 def open_episode(client, token="multi-token"):
     response = client.post("/admin/episodes", headers=ADMIN, json={
         "token": token,
+        "clock": "2026-11-10 12:00:00",
         "domains": [
             {"name": "mcd", "scene": "lunch", "account": "alice"},
             {"name": "echo", "scene": "default", "account": "guest"},

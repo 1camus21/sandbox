@@ -710,7 +710,7 @@ def test_legacy_without_quote_requirement_keeps_false(client, sandbox_client, mo
             return "有公司地址。"
 
     name = "legacy-read-only"
-    view = {"prompt": "查地址", "taskId": name, "quote": False}
+    view = {"prompt": "查地址", "taskId": name, "quote": False, "clock": "2026-11-10 12:00:00"}
     monkeypatch.setitem(SCENARIOS, name, view)
     fake = OldReadOnly(client, name)
     with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as iris_http:

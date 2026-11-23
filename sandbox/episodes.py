@@ -91,36 +91,37 @@ def _parse_moment(value: str) -> datetime:
     return datetime.fromisoformat(value.replace(" ", "T")).replace(tzinfo=None)
 
 
-def _resolve_clock(worlds: dict[str, dict], domains: dict[str, Domain], primary: str,
-                   requested: str | None) -> tuple[datetime, dict | None]:
-    """按世界窗口确定一局的时钟；窗口无交集时拒绝开局。"""
+def _resolve_clock(worlds: dict[str, dict], domains: dict[str, Domain],
+                   requested: str | None) -> tuple[datetime, dict | None, str]:
+    """先求世界窗口交集；任务声明时钟则校验，未声明则在交集内选取。"""
     windows = []
     for name, world in worlds.items():
         window = domains[name].world_window(world)
         if window is not None:
             windows.append((name, window, _parse_moment(window["from"]), _parse_moment(window["to"])))
+    intersection = None
+    if windows:
+        start = max(item[2] for item in windows)
+        end = min(item[3] for item in windows)
+        if start > end:
+            detail = ", ".join(f"{name} {window['from']}..{window['to']}"
+                               for name, window, _, _ in windows)
+            raise ValueError(f"worlds have no overlapping window: {detail}")
+        intersection = {"from": start.isoformat(), "to": end.isoformat()}
     if requested is not None:
         moment = _parse_moment(requested)
-        for name, window, start, end in windows:
+        if intersection is not None:
+            start = _parse_moment(intersection["from"])
+            end = _parse_moment(intersection["to"])
             if not start <= moment <= end:
-                raise ValueError(f"clock outside world window: {name} {window['from']}..{window['to']}")
-        return moment, None
-    if not windows:
-        return _parse_moment(worlds[primary]["clock"]), None
-    start = max(item[2] for item in windows)
-    end = min(item[3] for item in windows)
-    if start > end:
-        detail = ", ".join(f"{name} {window['from']}..{window['to']}"
-                           for name, window, _, _ in windows)
-        raise ValueError(f"worlds have no overlapping window: {detail}")
-    primary_clock = _parse_moment(worlds[primary]["clock"])
-    if start <= primary_clock <= end:
-        moment = primary_clock
-    elif start + timedelta(hours=1) <= end:
-        moment = start + timedelta(hours=1)
-    else:
-        moment = start
-    return moment, {"from": start.isoformat(), "to": end.isoformat()}
+                raise ValueError(f"clock outside world windows: {intersection['from']}..{intersection['to']}")
+        return moment, intersection, "task"
+    if intersection is None:
+        raise ValueError("task must declare clock when worlds have no window")
+    start = _parse_moment(intersection["from"])
+    end = _parse_moment(intersection["to"])
+    moment = start + timedelta(hours=1) if start + timedelta(hours=1) <= end else start
+    return moment, intersection, "window"
 
 
 class Episode:
@@ -176,12 +177,12 @@ class Episode:
             self.worlds[config.domain.name] = world
             self.accounts[config.domain.name] = account
             self.account_ids[config.domain.name] = account.get("accountId") or (config.account or "")
-        moment, window = _resolve_clock(self.worlds, self.domains, self.primary, clock)
+        moment, window, clock_source = _resolve_clock(self.worlds, self.domains, clock)
         self.clock = moment.strftime("%Y-%m-%d %H:%M:%S")
+        self.clock_source = clock_source
         self.window = window
         for world in self.worlds.values():
-            if "clock" in world:
-                world["clock"] = self.clock
+            world["clock"] = self.clock
         self.start_faults: list[int] = []
         for index, fault in enumerate(self.faults):
             if fault.tool != "*" and fault.tool not in self.tool_domains:
@@ -354,6 +355,7 @@ class Episode:
                 "accountId": self.account_ids[primary],
                 "accountIds": dict(self.account_ids),
                 "clock": self.clock,
+                "clockSource": self.clock_source,
                 "window": self.window,
                 "seed": self.seed,
                 "closed": self.closed,

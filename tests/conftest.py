@@ -22,8 +22,9 @@ def client():
         yield http
 
 
-def start(client, *, token=MCP_TOKEN, **config):
-    response = client.post("/admin/episodes", headers=ADMIN, json={"token": token, **config})
+def start(client, *, token=MCP_TOKEN, clock="2026-11-10 12:00:00", **config):
+    response = client.post("/admin/episodes", headers=ADMIN,
+                           json={"token": token, "clock": clock, **config})
     return response.raise_for_status().json()["episodeId"]
 
 
