@@ -18,6 +18,7 @@
 - Connect Iris to every domain a task declares, probe each domain before the task, and judge the probe per domain; Weibo connects through a generated OAuth credentials file, also available as `python -m runner.domains.weibo_cli` for direct runs.
 - Add the `weibo.standard` check pack and a Weibo S0 task set of seven read-only tool contracts; tasks without a declared pack use each domain's own standard pack.
 - Run task-set directories in regression with `--tasks-dir`, loading the set's own `checks.py` like `runner.batch`.
+- Add `python -m runner.connect` so external orchestrators can prepare a task's Iris connection, including the Weibo credentials file, and receive the environment as JSON.
 
 ### Changed
 

@@ -1,5 +1,6 @@
 """Runner 的领域配置：麦乐送行为不变，微博通过授权文件接入，多领域任务逐个领域探测。"""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -150,3 +151,34 @@ def test_regression_reads_task_set_directories():
     case = Case(1, "s0-wb-me", tasks["s0-wb-me"])
     assert case.spec.env.domains[0].name == "weibo"
     assert case == Case(1, "s0-wb-me")     # 任务定义不参与比较
+
+
+# ---- runner.connect：供外部编排调用 ----
+
+def connect_output(capsys, *argv):
+    from runner import connect
+    assert connect.main(list(argv)) == 0
+    return json.loads(capsys.readouterr().out)
+
+
+def test_connect_prints_mcd_environment(tmp_path, capsys):
+    out = connect_output(capsys, "order", "--episode-id", EPISODE, "--token", TOKEN, "--workdir", str(tmp_path))
+    assert out == {"domains": ["mcd"], "env": {"MCD_MCP_URL": f"{SANDBOX}/mcp/{EPISODE}/1", "MCD_MCP_TOKEN": TOKEN}}
+
+
+def test_connect_writes_weibo_credentials(tmp_path, capsys):
+    from runner.tasks import TASKS_DIR
+    out = connect_output(capsys, "s0-wb-me", "--tasks-dir", str(TASKS_DIR / "20261124T0900"),
+                         "--episode-id", EPISODE, "--token", TOKEN, "--workdir", str(tmp_path))
+    env = out["env"]
+    assert out["domains"] == ["weibo"] and env["WEIBO_MCP_URL"] == f"{SANDBOX}/mcp/{EPISODE}/1"
+    assert read_token(env["WEIBO_CREDENTIALS_FILE"]) == TOKEN
+    assert Path(env["WEIBO_CREDENTIALS_FILE"]).parent.parent == tmp_path.resolve()
+
+
+def test_connect_rejects_bad_input(tmp_path):
+    from runner import connect
+    with pytest.raises(SystemExit):
+        connect.main(["order", "--episode-id", "short", "--token", TOKEN, "--workdir", str(tmp_path)])
+    with pytest.raises(SystemExit):
+        connect.main(["missing", "--episode-id", EPISODE, "--token", TOKEN, "--workdir", str(tmp_path)])
