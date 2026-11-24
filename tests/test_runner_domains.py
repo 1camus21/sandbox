@@ -125,3 +125,28 @@ def test_mcd_wrapper_keeps_its_import_path():
     from runner.verdict import preflight_retained as legacy
     assert legacy(evidence([MCD_PROBE])) is True
     assert legacy(evidence([WEIBO_PROBE])) is False
+
+
+# ---- 环境标识与回归任务 ----
+
+def test_env_id_names_each_domain():
+    from runner.episode import env_id
+    from runner.tasks import TASKS_DIR, load_tasks
+    assert env_id(load_tasks()["order"], 0) == "lunch:alice:0"     # 旧任务不变
+    weibo = load_tasks(TASKS_DIR / "20261124T0900")["s0-wb-me"]
+    assert env_id(weibo, 0) == "weibo:daily:alice:0"
+    both = spec([("mcd", "lunch"), ("weibo", "daily")])
+    assert env_id(both, 3) == "mcd:lunch:alice+weibo:daily:alice:3"
+    inline = TaskSpec.model_validate({"taskId": "x", "script": {"prompt": "x"}, "env": {"domains": [
+        {"name": "weibo", "worldInline": {"users": []}, "account": "bob"}]}})
+    assert env_id(inline, 0) == "weibo:inline:bob:0"
+
+
+def test_regression_reads_task_set_directories():
+    from runner.regression import Case, suite_tasks
+    from runner.tasks import TASKS_DIR
+    tasks = suite_tasks(TASKS_DIR / "20261124T0900")
+    assert {"s0-wb-me", "s0-wb-comments"} <= set(tasks)
+    case = Case(1, "s0-wb-me", tasks["s0-wb-me"])
+    assert case.spec.env.domains[0].name == "weibo"
+    assert case == Case(1, "s0-wb-me")     # 任务定义不参与比较

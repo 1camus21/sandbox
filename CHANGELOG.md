@@ -17,6 +17,7 @@
 - Add a synthetic Weibo domain with 13 tools, a `daily` world, `alice` and `bob` accounts, four business faults, and a task manifest; user actions are recorded in the account and never change the world.
 - Connect Iris to every domain a task declares, probe each domain before the task, and judge the probe per domain; Weibo connects through a generated OAuth credentials file, also available as `python -m runner.domains.weibo_cli` for direct runs.
 - Add the `weibo.standard` check pack and a Weibo S0 task set of seven read-only tool contracts; tasks without a declared pack use each domain's own standard pack.
+- Run task-set directories in regression with `--tasks-dir`, loading the set's own `checks.py` like `runner.batch`.
 
 ### Changed
 
@@ -34,3 +35,4 @@
 - Preserve matching quotes across comparisons and include reservation details in order receipts.
 - Keep business verdicts available when only the diagnostic Iris trace is missing.
 - Write run summaries for episodes without McDelivery orders; `orderCount` is `null` when the episode has no McDelivery domain.
+- Record `envId` per declared domain (`weibo:daily:alice:0`); tasks without `env.domains` keep `scene:account:seed`.

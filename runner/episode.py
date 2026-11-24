@@ -20,6 +20,19 @@ from sandbox.domains.mcd.world.pricing import PriceError, price_items
 from sandbox.episodes import SCHEMA_VERSION, utc_now
 
 
+def env_id(task: TaskSpec, seed: int) -> str:
+    """环境标识。没有 env.domains 的旧任务保持 scene:account:seed；
+    声明了领域的任务逐个写出 领域:世界:账户，用 + 连接，内联的世界或账户记为 inline。"""
+    if not task.env.domains:
+        return f"{task.env.scene}:{task.env.account}:{seed}"
+    parts = "+".join(
+        f"{entry.name}:{'inline' if entry.worldInline is not None else entry.scene}:"
+        f"{'inline' if entry.accountInline is not None else entry.account}"
+        for entry in task.env.domains
+    )
+    return f"{parts}:{seed}"
+
+
 def identity(run_id: str, role: str) -> dict:
     return {"userId": f"sandbox-{role}-{run_id}", "sessionId": uuid4().hex}
 
@@ -272,7 +285,7 @@ def run_episode(task, iris: Iris, sandbox: Sandbox, *, seed: int | None = None,
         "taskId": task.taskId,
         "specVersion": task.version,
         "specSha256": task.digest(),
-        "envId": f"{task.env.scene}:{task.env.account}:{effective_seed}",
+        "envId": env_id(task, effective_seed),
         "irisTrace": {
             "events": len(trace),
             "possibleEventLimit": len(trace) >= 500,
