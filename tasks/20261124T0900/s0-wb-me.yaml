@@ -1,0 +1,16 @@
+taskId: s0-wb-me
+version: 2
+capability: tool-contract
+env:
+  clock: "2026-11-10 12:00:00"
+  domains:
+    - {name: weibo, scene: daily, account: alice}
+faults: []
+script:
+  prompt: |
+    请委派给微博助手，查一下我的微博账号叫什么、有多少粉丝。
+    只查询，不要发布、转发、评论、点赞或删除任何内容。
+expect:
+  calls:
+    - {id: me, tool: users_show_biz}
+  reply: {fromCalls: [me]}

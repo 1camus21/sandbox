@@ -1,0 +1,16 @@
+taskId: s0-wb-mentions
+version: 2
+capability: tool-contract
+env:
+  clock: "2026-11-10 12:00:00"
+  domains:
+    - {name: weibo, scene: daily, account: alice}
+faults: []
+script:
+  prompt: |
+    请委派给微博助手，看看最近有谁在微博上 @ 了我，说了什么。
+    只查询，不要发布、转发、评论、点赞或删除任何内容。
+expect:
+  calls:
+    - {id: mentions, tool: statuses_mentions_biz}
+  reply: {fromCalls: [mentions]}

@@ -1,0 +1,16 @@
+taskId: s0-wb-search
+version: 2
+capability: tool-contract
+env:
+  clock: "2026-11-10 12:00:00"
+  domains:
+    - {name: weibo, scene: daily, account: alice}
+faults: []
+script:
+  prompt: |
+    请委派给微博助手，搜一下“深圳降温”相关的微博，告诉我都有谁发了。
+    只查询，不要发布、转发、评论、点赞或删除任何内容。
+expect:
+  calls:
+    - {id: search, tool: search_statuses_limited}
+  reply: {fromCalls: [search]}

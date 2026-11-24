@@ -1,0 +1,16 @@
+taskId: s0-wb-hot-cate
+version: 2
+capability: tool-contract
+env:
+  clock: "2026-11-10 12:00:00"
+  domains:
+    - {name: weibo, scene: daily, account: alice}
+faults: []
+script:
+  prompt: |
+    请委派给微博助手，看看科技类的微博热搜有哪些。
+    只查询，不要发布、转发、评论、点赞或删除任何内容。
+expect:
+  calls:
+    - {id: hot, tool: search_hot_word_cate_biz, args: {category: 科技}}
+  reply: {fromCalls: [hot]}

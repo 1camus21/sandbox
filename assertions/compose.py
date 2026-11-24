@@ -57,9 +57,16 @@ class Optional:
 DEFAULT_USE = ("mcd.standard",)
 
 
+def default_use(spec) -> list[str]:
+    """未声明 use 时，任务涉及的每个领域使用自己的默认包；只涉及 mcd 的任务仍是 mcd.standard。"""
+    if not spec.env.domains:
+        return list(DEFAULT_USE)
+    return [f"{entry.name}.standard" for entry in spec.env.domains]
+
+
 def expand(spec, resolver) -> All:
     declared = spec.expect.checks
-    use = declared.use if declared.use is not None else list(DEFAULT_USE)
+    use = declared.use if declared.use is not None else default_use(spec)
     nodes: list[Check] = [resolver(name) for name in use]
     nodes.extend(resolver(name) for name in declared.all)
     if declared.any:

@@ -80,6 +80,13 @@ def test_all_tasks_load(tasks):
 def test_task_set_directory_loads_its_tasks(task_set):
     assert (task_set / "task-set.json").is_file()
     loaded = load_tasks(task_set)
+    assert loaded
+    for path in sorted(task_set.glob("*.yaml")):
+        assert loaded[path.stem].taskId == path.stem
+
+
+def test_mcd_task_set_contents():
+    loaded = load_tasks(TASKS_DIR / "20261119T2229")
     assert len(loaded) == 13
     assert loaded["s0-address-query"].expect.quote is False
     assert loaded["s0-order-create"].script.approvals[0].call == "create"
