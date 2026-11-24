@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from conftest import ADMIN, MCP_TOKEN, tool
+from runner.__main__ import save
 from runner.clients import Iris, Sandbox
 from runner.episode import run_episode
 from runner.tasks import load_all_tasks
@@ -97,8 +98,11 @@ def test_weibo_task_set_is_loaded():
 
 
 @pytest.mark.parametrize("name", sorted(TASKS))
-def test_weibo_tasks_pass_end_to_end(client, sandbox_client, name):
+def test_weibo_tasks_pass_end_to_end(client, sandbox_client, tmp_path, name):
     evidence = run(client, sandbox_client, name)
+    save(tmp_path / name, evidence)    # 和 python -m runner 一样写出证据和摘要
+    summary = json.loads((tmp_path / name / "summary.json").read_text(encoding="utf-8"))
+    assert summary["orderCount"] is None and summary["verdict"] == "passed"
     assert evidence["status"] == "complete", evidence["errors"]
     assert evidence["preflight"]["verified"] is True
     assert evidence["preflight"]["prompt"].startswith("这是微博集成测试")

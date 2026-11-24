@@ -33,3 +33,4 @@
 - Share clarification policies across monitor modes and validate replayed replies against scenario actions.
 - Preserve matching quotes across comparisons and include reservation details in order receipts.
 - Keep business verdicts available when only the diagnostic Iris trace is missing.
+- Write run summaries for episodes without McDelivery orders; `orderCount` is `null` when the episode has no McDelivery domain.
