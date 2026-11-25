@@ -222,6 +222,9 @@ __marimo__/
 # Sandbox run exports
 /runs/
 
+# 本地采样工具：从真实 MCP 拉数据生成 world fixture，只在本机使用，不进版本库
+/tools/
+
 # macOS Finder metadata
 .DS_Store
 

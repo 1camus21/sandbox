@@ -1,0 +1,20 @@
+taskId: s0m-006
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 帮我问一下麦当劳外送系统现在的时间，只报本地时间，不要换算 UTC，不要解释过程。
+expect:
+  calls:
+  - id: time
+    tool: now-time-info
+  state: {}
+  reply:
+    fromCalls:
+    - time
+  onlyCalls: true

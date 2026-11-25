@@ -1,0 +1,25 @@
+taskId: s0m-029
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 我账号里已有配送地址，查一下周围有几家麦当劳能外送，不要追问地址。每家一行：名称 + 营业时间。
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  - id: stores
+    tool: delivery-query-stores
+    args:
+      beType: 2
+    bind:
+      addressId: addresses
+  state: {}
+  reply:
+    fromCalls:
+    - stores

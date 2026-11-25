@@ -1,0 +1,19 @@
+taskId: s0m-089
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 看看我麦乐送最近有没有进行中的订单，只查询。
+expect:
+  calls:
+  - id: orders
+    tool: order-list
+  state: {}
+  reply:
+    fromCalls:
+    - orders

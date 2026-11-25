@@ -1,0 +1,28 @@
+taskId: s0m-023
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 帮我新增一个麦乐送配送地址：城市深圳市，地址南山区科苑路7号，详细地址G座707，联系人吴九，手机13300007777。只新增地址，不要下单。回答只写：已新增、地址编号、联系人、手机号，不要描述核验过程。
+expect:
+  calls:
+  - id: add
+    tool: delivery-create-address
+    args:
+      city: 深圳市
+      address: 南山区科苑路7号
+      addressDetail: G座707
+      contactName: 吴九
+      phone: '13300007777'
+  state:
+    address:
+      from: add
+  reply:
+    fromCalls:
+    - add
+    noOrderClaim: true

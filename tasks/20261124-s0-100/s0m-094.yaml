@@ -1,0 +1,56 @@
+taskId: s0m-094
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 用我麦乐送账号里已保存的配送地址，帮我下一份麦当劳「纯悦」，不要付款。下单前先算价，并在回复里用「总价：…元」说明报价，然后再发起下单；只提交一次，不要重复下单，拿到订单号后就结束。只报订单号和金额，不要写补充说明，也不要新增地址。
+  approvals:
+  - call: create
+  quoteItems:
+  - productCode: '903757'
+    quantity: 1
+  budgetFen: 20000
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  - id: stores
+    tool: delivery-query-stores
+    args:
+      beType: 2
+    bind:
+      addressId: addresses
+  - id: menu
+    tool: query-meals
+    args:
+      storeCode: '1420516'
+      beCode: '142051602'
+      orderType: 2
+      beType: 2
+  - id: quote
+    tool: calculate-price
+    args:
+      storeCode: '1420516'
+      beCode: '142051602'
+      orderType: 2
+      beType: 2
+  - id: create
+    tool: create-order
+    args:
+      beType: 2
+      orderType: 2
+    bind:
+      addressId: addresses
+      storeCode: quote
+  state:
+    order:
+      from: create
+      status: 待支付
+  reply:
+    fromCalls:
+    - create

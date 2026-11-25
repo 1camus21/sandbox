@@ -1,0 +1,20 @@
+{
+  "accountId": "real-lunch-user",
+  "displayName": "沙箱用户",
+  "addresses": [
+    {
+      "addressId": "1036698750192196090841994990",
+      "tag": "公司",
+      "contactName": "沙箱用户",
+      "phone": "138****8000",
+      "fullAddress": "广东示例路 1 号 A 座 101（模拟地址）",
+      "zone": "zone-a"
+    }
+  ],
+  "coupons": [],
+  "orders": [],
+  "quotes": [],
+  "invalidCoupons": [],
+  "points": 0,
+  "preferences": {}
+}

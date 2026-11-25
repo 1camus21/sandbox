@@ -1,0 +1,17 @@
+taskId: s0m-007
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 查一下我麦乐送账号里有几个配送地址，每个地址的标签是什么。只查询，不要新增地址。
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  state: {}
+  reply: {}

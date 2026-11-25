@@ -1,0 +1,17 @@
+taskId: s0m-015
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 看一下麦乐送地址簿，告诉我地址数量和每个地址的标签。
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  state: {}
+  reply: {}

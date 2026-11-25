@@ -1,0 +1,17 @@
+taskId: s0m-008
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 我的麦当劳外送地址簿里存了哪些地址？逐条给出「标签：地址」，不要解释过程。
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  state: {}
+  reply: {}

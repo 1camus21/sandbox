@@ -1,0 +1,20 @@
+taskId: s0m-001
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 用麦乐送的时间工具查一下现在几点。只报本地时间，不要换算 UTC、不要提时区偏移，不要解释过程。
+expect:
+  calls:
+  - id: time
+    tool: now-time-info
+  state: {}
+  reply:
+    fromCalls:
+    - time
+  onlyCalls: true

@@ -1,0 +1,19 @@
+taskId: s0m-083
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 看看我麦乐送账户里的券还有没有没过期的。
+expect:
+  calls:
+  - id: coupons
+    tool: query-my-coupons
+  state: {}
+  reply:
+    fromCalls:
+    - coupons
