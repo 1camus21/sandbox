@@ -1,0 +1,28 @@
+taskId: s0m-020
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 帮我新增一个麦乐送配送地址：城市深圳市，地址宝安区新湖路4号，详细地址D座404，联系人赵六，手机13600004444。只新增地址，不要下单。回答只写：已新增、地址编号、联系人、手机号，不要描述核验过程。
+expect:
+  calls:
+  - id: add
+    tool: delivery-create-address
+    args:
+      city: 深圳市
+      address: 宝安区新湖路4号
+      addressDetail: D座404
+      contactName: 赵六
+      phone: '13600004444'
+  state:
+    address:
+      from: add
+  reply:
+    fromCalls:
+    - add
+    noOrderClaim: true

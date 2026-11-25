@@ -1,0 +1,19 @@
+taskId: s0m-091
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 我麦乐送账号下现在有未完成的订单吗？
+expect:
+  calls:
+  - id: orders
+    tool: order-list
+  state: {}
+  reply:
+    fromCalls:
+    - orders

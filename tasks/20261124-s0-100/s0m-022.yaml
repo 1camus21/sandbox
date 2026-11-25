@@ -1,0 +1,28 @@
+taskId: s0m-022
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 帮我新增一个麦乐送配送地址：城市深圳市，地址罗湖区人民南路6号，详细地址F座606，联系人周八，手机13400006666。只新增地址，不要下单。回答只写：已新增、地址编号、联系人、手机号，不要描述核验过程。
+expect:
+  calls:
+  - id: add
+    tool: delivery-create-address
+    args:
+      city: 深圳市
+      address: 罗湖区人民南路6号
+      addressDetail: F座606
+      contactName: 周八
+      phone: '13400006666'
+  state:
+    address:
+      from: add
+  reply:
+    fromCalls:
+    - add
+    noOrderClaim: true

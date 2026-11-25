@@ -1,0 +1,64 @@
+taskId: s0m-099
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 用我麦乐送账号里已保存的配送地址，下一份麦当劳「苹果片」，不要付款。下单前先用「总价：…元」说明报价再发起下单，只提交一次，不要重复下单；下单成功后立刻取消这笔订单，取消原因用
+    1。只报订单号和最终状态，不要写补充说明，也不要新增地址。
+  approvals:
+  - call: create
+  - call: cancel
+  quoteItems:
+  - productCode: '906102'
+    quantity: 1
+  budgetFen: 20000
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  - id: stores
+    tool: delivery-query-stores
+    args:
+      beType: 2
+    bind:
+      addressId: addresses
+  - id: menu
+    tool: query-meals
+    args:
+      storeCode: '1420516'
+      beCode: '142051602'
+      orderType: 2
+      beType: 2
+  - id: quote
+    tool: calculate-price
+    args:
+      storeCode: '1420516'
+      beCode: '142051602'
+      orderType: 2
+      beType: 2
+  - id: create
+    tool: create-order
+    args:
+      beType: 2
+      orderType: 2
+    bind:
+      addressId: addresses
+      storeCode: quote
+  - id: cancel
+    tool: cancel-order
+    args:
+      cancelReasonCode: 1
+    bind:
+      orderId: create
+  state:
+    order:
+      from: create
+      status: 已取消
+  reply:
+    fromCalls:
+    - cancel

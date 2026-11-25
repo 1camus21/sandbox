@@ -1,0 +1,30 @@
+taskId: s0m-040
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 用麦乐送查一下这家麦当劳门店现在卖什么，只要菜单列表。
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  - id: stores
+    tool: delivery-query-stores
+    args:
+      beType: 2
+    bind:
+      addressId: addresses
+  - id: menu
+    tool: query-meals
+    args:
+      storeCode: '1420516'
+      beCode: '142051602'
+      orderType: 2
+      beType: 2
+  state: {}
+  reply: {}

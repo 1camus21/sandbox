@@ -1,0 +1,40 @@
+taskId: s0m-060
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 查一下麦当劳「牛气满满套餐」这个套餐包含哪些商品，把里面的每一样都列出来。商品名称按接口返回的名称原样写出，不要改写、不要补充括号说明。只查询，不要算价，也不要下单。
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  - id: stores
+    tool: delivery-query-stores
+    args:
+      beType: 2
+    bind:
+      addressId: addresses
+  - id: menu
+    tool: query-meals
+    args:
+      storeCode: '1420516'
+      beCode: '142051602'
+      orderType: 2
+      beType: 2
+  - id: detail
+    tool: query-meal-detail
+    args:
+      storeCode: '1420516'
+      beCode: '142051602'
+      orderType: 2
+      beType: 2
+      code: '9900009251'
+  state: {}
+  reply:
+    fromCalls:
+    - detail

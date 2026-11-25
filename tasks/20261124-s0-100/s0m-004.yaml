@@ -1,0 +1,20 @@
+taskId: s0m-004
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 查一下麦乐送场景的当前时间。只报本地时间和时区名称，不要提 UTC，不要解释过程。
+expect:
+  calls:
+  - id: time
+    tool: now-time-info
+  state: {}
+  reply:
+    fromCalls:
+    - time
+  onlyCalls: true

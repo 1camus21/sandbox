@@ -1,0 +1,17 @@
+taskId: s0m-011
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 帮我查一下麦乐送的配送地址列表，给出数量和标签，不要新增也不要下单。
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  state: {}
+  reply: {}

@@ -1,0 +1,43 @@
+taskId: s0m-071
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 用我麦乐送账号里已保存的配送地址，帮我算一下三份麦当劳「菠萝派」的总价。只写商品价、配送费、打包费、总价四项，不要写计算过程或补充说明，不要新增地址，也不要下单。
+  quoteItems:
+  - productCode: '904105'
+    quantity: 3
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  - id: stores
+    tool: delivery-query-stores
+    args:
+      beType: 2
+    bind:
+      addressId: addresses
+  - id: menu
+    tool: query-meals
+    args:
+      storeCode: '1420516'
+      beCode: '142051602'
+      orderType: 2
+      beType: 2
+  - id: quote
+    tool: calculate-price
+    args:
+      storeCode: '1420516'
+      beCode: '142051602'
+      orderType: 2
+      beType: 2
+  state: {}
+  reply:
+    fromCalls:
+    - quote
+    noOrderClaim: true

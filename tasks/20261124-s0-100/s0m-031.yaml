@@ -1,0 +1,25 @@
+taskId: s0m-031
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 我想知道哪些麦当劳门店能送我到账号里的地址，每家一行写出名称和营业时间。
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  - id: stores
+    tool: delivery-query-stores
+    args:
+      beType: 2
+    bind:
+      addressId: addresses
+  state: {}
+  reply:
+    fromCalls:
+    - stores

@@ -1,0 +1,19 @@
+taskId: s0m-084
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 帮我查一下麦乐送账号下的优惠券列表。
+expect:
+  calls:
+  - id: coupons
+    tool: query-my-coupons
+  state: {}
+  reply:
+    fromCalls:
+    - coupons

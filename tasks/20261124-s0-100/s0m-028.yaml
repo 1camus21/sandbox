@@ -1,0 +1,25 @@
+taskId: s0m-028
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 帮我看看这家麦当劳外送门店现在是否营业、几点打烊，地址用账号里已保存的那条，名称和营业时间写在同一行。
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  - id: stores
+    tool: delivery-query-stores
+    args:
+      beType: 2
+    bind:
+      addressId: addresses
+  state: {}
+  reply:
+    fromCalls:
+    - stores

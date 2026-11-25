@@ -1,0 +1,19 @@
+taskId: s0m-082
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 我的麦当劳外送账号有可用的优惠券吗？
+expect:
+  calls:
+  - id: coupons
+    tool: query-my-coupons
+  state: {}
+  reply:
+    fromCalls:
+    - coupons

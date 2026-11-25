@@ -1,0 +1,17 @@
+taskId: s0m-009
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 看看我麦乐送账号里保存的配送地址和标签，按「标签：地址」列出。
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  state: {}
+  reply: {}

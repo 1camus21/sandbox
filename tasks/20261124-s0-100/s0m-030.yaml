@@ -1,0 +1,25 @@
+taskId: s0m-030
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 查一下麦乐送能送到我账号已保存地址的门店列表，不要查菜单，也不要追问地址。每家一行写名称和营业时间。
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  - id: stores
+    tool: delivery-query-stores
+    args:
+      beType: 2
+    bind:
+      addressId: addresses
+  state: {}
+  reply:
+    fromCalls:
+    - stores

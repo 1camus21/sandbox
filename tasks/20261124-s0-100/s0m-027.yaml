@@ -1,0 +1,25 @@
+taskId: s0m-027
+version: 1
+capability: tool-contract
+env:
+  clock: '2026-11-24 12:00:00'
+  scene: real-lunch
+  account: real-lunch-user
+  seed: 0
+faults: []
+script:
+  prompt: 用麦乐送查一下这个已保存地址能配送的麦当劳门店，每家一行写出门店名称和营业时间。
+expect:
+  calls:
+  - id: addresses
+    tool: delivery-query-addresses
+  - id: stores
+    tool: delivery-query-stores
+    args:
+      beType: 2
+    bind:
+      addressId: addresses
+  state: {}
+  reply:
+    fromCalls:
+    - stores
