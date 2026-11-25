@@ -27,6 +27,7 @@
 
 ### Fixed
 
+- Reject timeout outcomes for Weibo tools at task load until Weibo timeout judging is implemented.
 - Keep a persistent `STATUS_DELETED` fault applicable on every call, skip IDs already used by inline data when allocating new Weibo IDs, start the `daily` window at 10:00 after all seed content, and write the Weibo credentials file only after `weibo_cli --open` succeeds.
 - Reject an empty task set in regression runs, compute the McDelivery quote only for tasks that involve McDelivery, and include `SANDBOX_EPISODE_ID` in the `runner.connect` output.
 - Run single-domain checks, including each domain's default pack, on a view of their own domain in multi-domain tasks, so the result no longer depends on the order of `env.domains`.

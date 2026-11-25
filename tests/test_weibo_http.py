@@ -147,6 +147,7 @@ def test_manifest_accepts_a_bound_write():
       {"id": "post", "tool": "comments_create", "bind": {"id": "find"}, "outcome": "timeout_committed"}],
      ["post"]),                                                                          # 只有发布能期望超时
     ([{"id": "order", "tool": "create-order"}], []),                                     # 不是微博的工具
+    ([{"id": "post", "tool": "statuses_update", "outcome": "timeout_committed"}], ["post"]),  # 超时判定实现前不允许声明
 ])
 def test_manifest_rejects_invalid_calls(calls, approvals):
     with pytest.raises(ValueError):

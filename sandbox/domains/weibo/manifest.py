@@ -28,5 +28,7 @@ REQUIRED_BINDINGS = {
 }
 BINDING_SOURCES: dict[str, dict[str, frozenset[str]]] = {}
 APPROVAL_TOOLS = WRITE_TOOLS
-TIMEOUT_TOOLS = frozenset({"statuses_update"})
+# 超时结果（timeout_committed / timeout_not_committed）的判定需要联合核对传输、注入的故障和业务执行结果，
+# 微博尚未实现；在实现之前，任务加载时拒绝对微博工具声明超时结果，避免一条普通成功记录同时匹配两种结果。
+TIMEOUT_TOOLS: frozenset[str] = frozenset()
 FIELD_TOOLS: dict[str, frozenset[str]] = {}
