@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from assertions.preflight import preflight_retained, probe_succeeded
-from runner.domains import DOMAINS, get_domain, task_domains
+from runner.domains import DISABLED_URL, DOMAINS, get_domain, iris_connection, task_domains
 from runner.domains import weibo_cli
 from runner.domains.weibo import FAR_FUTURE, read_token, write_credentials
 from runner.tasks import TaskSpec
@@ -163,7 +163,10 @@ def connect_output(capsys, *argv):
 
 def test_connect_prints_mcd_environment(tmp_path, capsys):
     out = connect_output(capsys, "order", "--episode-id", EPISODE, "--token", TOKEN, "--workdir", str(tmp_path))
-    assert out == {"domains": ["mcd"], "env": {"MCD_MCP_URL": f"{SANDBOX}/mcp/{EPISODE}/1", "MCD_MCP_TOKEN": TOKEN}}
+    env = out["env"]
+    assert out["domains"] == ["mcd"]
+    assert (env["MCD_MCP_URL"], env["MCD_MCP_TOKEN"]) == (f"{SANDBOX}/mcp/{EPISODE}/1", TOKEN)
+    assert env["WEIBO_MCP_URL"].startswith(DISABLED_URL)           # 没用到的微博被显式禁用
 
 
 def test_connect_writes_weibo_credentials(tmp_path, capsys):
@@ -182,3 +185,61 @@ def test_connect_rejects_bad_input(tmp_path):
         connect.main(["order", "--episode-id", "short", "--token", TOKEN, "--workdir", str(tmp_path)])
     with pytest.raises(SystemExit):
         connect.main(["missing", "--episode-id", EPISODE, "--token", TOKEN, "--workdir", str(tmp_path)])
+
+
+
+# ---- 隔离任务没用到的领域 ----
+
+HOST = {"MCD_MCP_URL": "https://mcd.example.com/mcp", "MCD_MCP_TOKEN": "real-mcd",
+        "WEIBO_MCP_URL": "https://weibo.example.com/mcp", "WEIBO_CREDENTIALS_FILE": "C:/real/auth.json"}
+
+
+def test_unused_domains_are_disabled(tmp_path):
+    from runner.tasks import TASKS_DIR
+    weibo_only = load_tasks_for("s0-wb-me", TASKS_DIR / "20261124T0900")
+    env = dict(HOST, **iris_connection(weibo_only, SANDBOX, EPISODE, TOKEN, tmp_path))
+    assert env["WEIBO_MCP_URL"] == f"{SANDBOX}/mcp/{EPISODE}/1"
+    assert (env["MCD_MCP_URL"], env["MCD_MCP_TOKEN"]) == (f"{DISABLED_URL}/mcd", "disabled")
+
+    mcd_only = load_tasks_for("order")
+    env = dict(HOST, **iris_connection(mcd_only, SANDBOX, EPISODE, TOKEN, tmp_path / "mcd"))
+    assert env["MCD_MCP_URL"] == f"{SANDBOX}/mcp/{EPISODE}/1"
+    assert env["WEIBO_MCP_URL"] == f"{DISABLED_URL}/weibo"
+    assert not Path(env["WEIBO_CREDENTIALS_FILE"]).exists()        # Iris 读不到令牌，不会发请求
+
+
+def test_two_domain_task_connects_both_through_domain_endpoints(tmp_path):
+    env = iris_connection(spec([("mcd", "lunch"), ("weibo", "daily")]), SANDBOX, EPISODE, TOKEN, tmp_path)
+    assert env["MCD_MCP_URL"] == f"{SANDBOX}/mcp/{EPISODE}/mcd/1"
+    assert env["WEIBO_MCP_URL"] == f"{SANDBOX}/mcp/{EPISODE}/weibo/1"
+
+
+@pytest.mark.parametrize("task_id", ["s0-wb-me", "order"])
+def test_regression_case_environment_overrides_host_services(tmp_path, monkeypatch, task_id):
+    """回归启动 Java 之前，宿主里预设的真实服务配置都被本局或禁用值覆盖。"""
+    from contextlib import contextmanager
+    from runner import regression
+    from runner.tasks import TASKS_DIR
+    task = load_tasks_for(task_id, TASKS_DIR / "20261124T0900" if task_id.startswith("s0-wb") else TASKS_DIR)
+    seen = {}
+
+    @contextmanager
+    def launch(command, *, cwd, env, log, processes):
+        seen.update(env)
+        raise RuntimeError("stop before Java starts")
+        yield
+
+    monkeypatch.setattr(regression, "running", launch)
+    regression.collect_case(regression.Case(1, task_id, task), batch=tmp_path, jar=tmp_path / "iris.jar",
+                            iris_env=dict(HOST), sandbox_url=SANDBOX, admin_token="admin", seed=0, key="",
+                            provenance={}, processes=None)
+    assert seen["MCD_MCP_URL"] != HOST["MCD_MCP_URL"] and seen["WEIBO_MCP_URL"] != HOST["WEIBO_MCP_URL"]
+    assert seen["MCD_MCP_TOKEN"] != HOST["MCD_MCP_TOKEN"]
+    assert seen["WEIBO_CREDENTIALS_FILE"] != HOST["WEIBO_CREDENTIALS_FILE"]
+    enabled = "WEIBO_MCP_URL" if task_id.startswith("s0-wb") else "MCD_MCP_URL"
+    assert seen[enabled].startswith(f"{SANDBOX}/mcp/")
+
+
+def load_tasks_for(task_id, directory=None):
+    from runner.tasks import TASKS_DIR, load_tasks
+    return load_tasks(directory or TASKS_DIR)[task_id]

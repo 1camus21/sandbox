@@ -67,6 +67,12 @@ class Weibo:
         path = write_credentials(Path(workdir) / ".weibo" / "auth.json", token, sandbox_url)
         return {"WEIBO_MCP_URL": f"{sandbox_url}{mcp}", "WEIBO_CREDENTIALS_FILE": str(path)}
 
+    def disconnect_iris(self, workdir: Path) -> dict[str, str]:
+        """授权文件指向一个不存在的路径：Iris 读不到令牌，微博助手不会发出任何请求。"""
+        from runner.domains import DISABLED_URL
+        return {"WEIBO_MCP_URL": f"{DISABLED_URL}/weibo",
+                "WEIBO_CREDENTIALS_FILE": str(Path(workdir) / ".weibo" / "disabled" / "auth.json")}
+
     def direct_token(self) -> str | None:
         path = os.environ.get("WEIBO_CREDENTIALS_FILE")
         return read_token(Path(path)) if path else None

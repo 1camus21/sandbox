@@ -27,6 +27,14 @@ class RunnerDomain(Protocol):
         """
         ...
 
+    def disconnect_iris(self, workdir: Path) -> dict[str, str]:
+        """任务没有用到本领域时的环境变量：显式指向不存在的地址和凭据。
+
+        环境变量优先于 Iris 项目的 .env，所以必须设成禁用值，而不是删除；
+        否则 Iris 会沿用 .env 里的配置，误调用时可能访问真实服务。
+        """
+        ...
+
     def direct_token(self) -> str | None:
         """直接模式（连接已在运行的 Iris）下这一局使用的 MCP 令牌，没有配置时返回 None。"""
         ...
@@ -36,6 +44,9 @@ def task_domains(task) -> list[str]:
     """任务涉及的领域，按声明顺序；没有声明 env.domains 的旧任务只涉及 mcd。"""
     entries = task.env.domains
     return [entry.name for entry in entries] if entries else ["mcd"]
+
+
+DISABLED_URL = "http://127.0.0.1:9/disabled"    # 本机 9 端口没有服务，连接立即被拒绝
 
 
 from runner.domains.mcd import McDelivery  # noqa: E402
@@ -49,3 +60,19 @@ def get_domain(name: str) -> RunnerDomain:
         return DOMAINS[name]
     except KeyError:
         raise ValueError(f"unknown domain: {name}") from None
+
+
+def iris_connection(task, sandbox_url: str, episode_id: str, token: str, workdir: Path) -> dict[str, str]:
+    """一局里 Iris 的全部领域连接：任务用到的领域指向本局，其余领域显式禁用。
+
+    回归模式与 runner.connect 共用这一处，启用、禁用和局号只在这里决定。
+    """
+    names = task_domains(task)
+    env: dict[str, str] = {}
+    for name, domain in DOMAINS.items():
+        if name in names:
+            env.update(domain.connect_iris(sandbox_url.rstrip("/"), episode_id, token, Path(workdir),
+                                           scoped=len(names) > 1))
+        else:
+            env.update(domain.disconnect_iris(Path(workdir)))
+    return env

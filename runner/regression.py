@@ -23,7 +23,7 @@ import psycopg
 
 from monitor.qwen import api_key
 from runner.__main__ import run_case, save, source_revision
-from runner.domains import get_domain, task_domains
+from runner.domains import iris_connection
 from runner.report import save_report, summarize
 from assertions.load import load_checks
 from runner.tasks import TASKS_DIR, load_tasks
@@ -165,18 +165,13 @@ def collect_case(case: Case, *, batch: Path, jar: Path, iris_env: dict, sandbox_
     episode_id, mcp_token = token_hex(16), token_hex(24)
     task = case.spec if case.spec is not None else TASKS[case.scenario]
     mode = "active" if task.script.interactions else "off"
-    domains = [get_domain(name) for name in task_domains(task)]
     log = batch / f"{case.label}.log"
     result = {"index": case.index, "scenario": case.scenario, "episodeId": episode_id,
               "startedAt": started, "log": log.name}
     try:
         with TemporaryDirectory(prefix="iris-regression-") as work:
-            # 连接方式由领域决定：麦乐送注入令牌，微博先在工作目录写授权文件。
-            # 多领域任务用按领域的端点，每个助手只看到本领域的工具。
-            case_env = dict(iris_env)
-            for domain in domains:
-                case_env.update(domain.connect_iris(sandbox_url, episode_id, mcp_token, Path(work),
-                                                    scoped=len(domains) > 1))
+            # 用到的领域指向本局（微博先在工作目录写授权文件），没用到的领域显式禁用。
+            case_env = dict(iris_env, **iris_connection(task, sandbox_url, episode_id, mcp_token, Path(work)))
             with running(
                 ["java", "-Dfile.encoding=UTF-8", "-jar", str(jar), "--server.address=127.0.0.1",
                  "--server.port=0", "--spring.sql.init.mode=never", "--iris.memory.daily-note.cron=-"],

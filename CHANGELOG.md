@@ -27,6 +27,7 @@
 
 ### Fixed
 
+- Disable every domain a task does not use when connecting Iris in regression runs and through `runner.connect`, so host settings cannot route a misdirected call to a real service.
 - Require visible quotes, matching Iris ledger entries, and read-only recovery evidence in scenario verdicts.
 - Prevent in-flight requests from crossing a round or reset and record observed disconnects separately from planned faults.
 - Preserve order chronology and reject invalid reservations and unsupported customizations.

@@ -4,8 +4,9 @@
 
     python -m runner.connect <task> --tasks-dir <dir> --episode-id <id> --token <token> --workdir <dir>
 
-输出 {"env": {...}}。麦乐送给出 MCD_MCP_URL、MCD_MCP_TOKEN；微博把授权文件写进 workdir，
-给出 WEIBO_MCP_URL、WEIBO_CREDENTIALS_FILE。任务涉及多个领域时使用按领域的端点。
+输出 {"env": {...}}。任务用到的领域指向本局：麦乐送给出 MCD_MCP_URL、MCD_MCP_TOKEN；
+微博把授权文件写进 workdir，给出 WEIBO_MCP_URL、WEIBO_CREDENTIALS_FILE。任务没用到的领域
+显式指向不存在的地址和凭据。任务涉及多个领域时使用按领域的端点。
 """
 from __future__ import annotations
 
@@ -15,19 +16,14 @@ import re
 import sys
 from pathlib import Path
 
-from runner.domains import get_domain, task_domains
+from runner.domains import iris_connection, task_domains
 from runner.tasks import TASKS_DIR, load_tasks
 
 EPISODE_ID = re.compile(r"[0-9a-f]{32}")
 
 
 def connection_env(task, sandbox_url: str, episode_id: str, token: str, workdir: Path) -> dict[str, str]:
-    domains = task_domains(task)
-    env: dict[str, str] = {}
-    for name in domains:
-        env.update(get_domain(name).connect_iris(sandbox_url.rstrip("/"), episode_id, token, Path(workdir),
-                                                 scoped=len(domains) > 1))
-    return env
+    return iris_connection(task, sandbox_url, episode_id, token, workdir)
 
 
 def main(argv: list[str] | None = None) -> int:

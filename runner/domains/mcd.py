@@ -21,5 +21,9 @@ class McDelivery:
         path = f"/mcp/{episode_id}/mcd/1" if scoped else f"/mcp/{episode_id}/1"
         return {"MCD_MCP_URL": f"{sandbox_url}{path}", "MCD_MCP_TOKEN": token}
 
+    def disconnect_iris(self, workdir: Path) -> dict[str, str]:
+        from runner.domains import DISABLED_URL
+        return {"MCD_MCP_URL": f"{DISABLED_URL}/mcd", "MCD_MCP_TOKEN": "disabled"}
+
     def direct_token(self) -> str | None:
         return os.environ.get("MCD_MCP_TOKEN") or None
