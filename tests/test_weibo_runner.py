@@ -12,10 +12,24 @@ from conftest import ADMIN, MCP_TOKEN, tool
 from runner.__main__ import save
 from runner.clients import Iris, Sandbox
 from runner.episode import run_episode
-from runner.tasks import TASKS_DIR, load_all_tasks
+from runner.tasks import TASKS_DIR, TaskSpec, load_all_tasks
 
 load_checks(TASKS_DIR / "20261124T0900" / "checks.py")    # 与 python -m runner --tasks-dir 一样加载任务集检查
 TASKS = {name: spec for name, spec in load_all_tasks().items() if name.startswith("s0-wb-")}
+
+
+def dual_task(order):
+    """同时查麦乐送时间和微博账号的只读题；order 决定 env.domains 的顺序。"""
+    return TaskSpec.model_validate({
+        "taskId": "x-time-and-me", "version": 2, "capability": "tool-contract",
+        "env": {"clock": "2026-11-10 12:00:00",
+                "domains": [{"name": "mcd", "scene": "lunch", "account": "alice"},
+                            {"name": "weibo", "scene": "daily", "account": "alice"}][::order]},
+        "script": {"prompt": "现在几点？顺便看看我的微博账号叫什么。只查询，不要下单或发布。"},
+        "expect": {"calls": [{"id": "time", "domain": "mcd", "tool": "now-time-info"},
+                             {"id": "me", "domain": "weibo", "tool": "users_show_biz"}],
+                   "reply": {"fromCalls": ["time", "me"]}},
+    })
 
 
 @pytest.fixture
@@ -39,13 +53,20 @@ class FakeWeiboIris:
         envelope = json.loads(response.raise_for_status().json()["result"]["content"][0]["text"])
         return envelope.get("result") or {}
 
+    def call_mcd(self, name, args=None):
+        response = tool(self.sandbox, name, args or {})
+        return json.loads(response.raise_for_status().json()["result"]["content"][0]["text"])["data"]
+
     def answer(self):
         if self.defect == "no_call":
             return "深圳今天降温了，大家注意保暖。"
         if self.defect == "unexpected_write":
             self.call("statuses_update", {"status": "顺手发一条"})
         name = self.name
-        if name == "s0-wb-hot":
+        if name == "x-time-and-me":
+            formatted = self.call_mcd("now-time-info")["formatted"]
+            reply = f"{formatted}；你的微博账号是 {self.call('users_show_biz')['screen_name']}。"
+        elif name == "s0-wb-hot":
             words = self.call("search_hot_word_biz")["hot_words"]
             reply = "热搜前三：" + "、".join(row["word"] for row in words[:3])
         elif name == "s0-wb-hot-cate":
@@ -78,6 +99,9 @@ class FakeWeiboIris:
         if path == "/api/chat":
             data = json.loads(request.content)
             if "-preflight-" in data["userId"]:
+                if "delivery-query-addresses" in data["prompt"]:      # 麦乐送的探测
+                    self.call_mcd("delivery-query-addresses")
+                    return httpx.Response(200, text="有公司地址。")
                 count = self.call("search_statuses_limited", {"q": "深圳降温"})["total_number"]
                 return httpx.Response(200, text=f"搜到 {count} 条微博。")
             return httpx.Response(200, text=self.answer())
@@ -88,10 +112,10 @@ class FakeWeiboIris:
         raise AssertionError(path)
 
 
-def run(client, sandbox_client, name, **kwargs):
+def run(client, sandbox_client, name, task=None, **kwargs):
     fake = FakeWeiboIris(client, name, **kwargs)
     with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as http:
-        return run_episode(TASKS[name], Iris(http), sandbox_client)
+        return run_episode(task or TASKS[name], Iris(http), sandbox_client)
 
 
 def test_weibo_task_set_is_loaded():
@@ -136,3 +160,15 @@ def test_mcd_tasks_still_default_to_the_mcd_pack():
     tasks = load_all_tasks()
     assert default_use(tasks["order"]) == ["mcd.standard"]
     assert default_use(TASKS["s0-wb-me"]) == ["weibo.standard"]
+
+
+@pytest.mark.parametrize("order", [1, -1], ids=["mcd-first", "weibo-first"])
+def test_two_domain_read_only_task_passes_in_either_order(client, sandbox_client, order):
+    """多领域任务中，每个领域的默认包只核对本领域的步骤、调用和状态，领域顺序不影响结果。"""
+    task = dual_task(order)
+    evidence = run(client, sandbox_client, "x-time-and-me", task=task)
+    assert evidence["status"] == "complete", evidence["errors"]
+    assert evidence["preflight"]["verified"] is True
+    verdict = evidence["verdict"]
+    assert verdict["status"] == "passed", verdict
+    assert verdict["checks"]["weibo.call.me"] is True and verdict["checks"]["weibo.reply.me"] is True

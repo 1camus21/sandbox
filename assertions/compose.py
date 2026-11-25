@@ -24,6 +24,21 @@ class All:
 
 
 @dataclass
+class Scoped:
+    """多领域任务里的单领域检查：在本领域的视图上执行。"""
+
+    domain: str
+    check: Check
+
+    @property
+    def spec(self):
+        return self.check.spec
+
+    def evaluate(self, ctx) -> Result:
+        return self.check.evaluate(ctx.for_domain(self.domain))
+
+
+@dataclass
 class Any:
     checks: list[Check]
 
@@ -67,10 +82,17 @@ def default_use(spec) -> list[str]:
 def expand(spec, resolver) -> All:
     declared = spec.expect.checks
     use = declared.use if declared.use is not None else default_use(spec)
-    nodes: list[Check] = [resolver(name) for name in use]
-    nodes.extend(resolver(name) for name in declared.all)
+    multi = len(spec.env.domains or []) > 1     # 旧任务没有 env.domains，字段为 None
+
+    def node(name: str):
+        # 多领域任务中，只声明一个领域的检查在本领域视图上执行；跨领域检查看完整上下文。
+        item = resolver(name)
+        return Scoped(item.spec.domains[0], item) if multi and len(item.spec.domains) == 1 else item
+
+    nodes: list[Check] = [node(name) for name in use]
+    nodes.extend(node(name) for name in declared.all)
     if declared.any:
-        nodes.append(Any([resolver(name) for name in declared.any]))
+        nodes.append(Any([node(name) for name in declared.any]))
     if declared.optional:
-        nodes.append(Optional([resolver(name) for name in declared.optional]))
+        nodes.append(Optional([node(name) for name in declared.optional]))
     return All(nodes)

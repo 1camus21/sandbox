@@ -33,6 +33,13 @@ class CheckContext:
     def mix(self, domains: tuple[str, ...]) -> MixView:
         return MixView(self.calls, self.transcript, self.clock, domains)
 
+    def for_domain(self, name: str) -> "CheckContext":
+        """多领域任务中，单领域检查使用的本领域上下文。"""
+        from assertions.scope import scoped_evidence, scoped_spec, task_domain_names
+        primary = task_domain_names(self.spec)[0]
+        return build_context(scoped_evidence(self.evidence, name, primary), self.quote,
+                             scoped_spec(self.spec, name))
+
 
 @dataclass(frozen=True)
 class DomainView:
