@@ -13,8 +13,10 @@ import httpx
 from monitor.qwen import QwenRecognizer, api_key, model_client
 from runner.batch import new_batch_id, run_manifest
 from runner.clients import Iris, Sandbox
+from runner.domains import get_domain, task_domains
 from runner.episode import run_episode
 from runner.report import save_report, summarize
+from assertions.load import load_checks
 from runner.tasks import TASKS_DIR, TaskSpec, load_tasks
 from sandbox.config import load_local_env
 from sandbox.storage import write_atomic
@@ -74,13 +76,18 @@ def main() -> int:
     args = parser.parse_args()
     if args.episode_id and (len(args.episode_id) != 32 or any(c not in "0123456789abcdef" for c in args.episode_id)):
         parser.error("--episode-id requires 32 lowercase hexadecimal characters")
+    load_checks(args.tasks_dir / "checks.py")   # 任务集自带的检查，与 runner.batch、回归一致
     tasks = load_tasks(args.tasks_dir)
     if args.task not in tasks:
         parser.error(f"unknown task: {args.task} (available: {', '.join(sorted(tasks))})")
+    domains = [get_domain(name) for name in task_domains(tasks[args.task])]
     admin_token = os.environ.get("SANDBOX_ADMIN_TOKEN")
-    mcp_token = os.environ.get("MCD_MCP_TOKEN")
+    # 一局只有一个令牌：任务涉及多个领域时，各领域给 Iris 配的必须是同一个令牌。
+    tokens = {domain.direct_token() for domain in domains}
+    mcp_token = tokens.pop() if len(tokens) == 1 else None
     if not admin_token or not mcp_token:
-        parser.error("set SANDBOX_ADMIN_TOKEN and MCD_MCP_TOKEN")
+        hint = " and ".join(domain.token_hint for domain in domains)
+        parser.error(f"set SANDBOX_ADMIN_TOKEN and {hint}" + (" with the same token" if len(domains) > 1 else ""))
     key = api_key() if args.monitor != "off" else ""
     if args.monitor != "off" and not key:
         parser.error("set MONITOR_DASHSCOPE_API_KEY or DASHSCOPE_API_KEY")

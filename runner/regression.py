@@ -3,7 +3,7 @@
 import argparse
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from functools import partial
 from pathlib import Path
@@ -23,14 +23,22 @@ import psycopg
 
 from monitor.qwen import api_key
 from runner.__main__ import run_case, save, source_revision
+from runner.domains import iris_connection
 from runner.report import save_report, summarize
-from runner.tasks import load_tasks
+from assertions.load import load_checks
+from runner.tasks import TASKS_DIR, TaskSpec, load_tasks
 from sandbox.config import load_local_env
 from sandbox.episodes import utc_now
 
 
 SANDBOX_ROOT = Path(__file__).resolve().parents[1]
 TASKS = load_tasks()
+
+
+def suite_tasks(tasks_dir: Path) -> dict:
+    """回归要跑的任务。任务集目录可以自带 checks.py，与 runner.batch 一样先加载。"""
+    load_checks(Path(tasks_dir) / "checks.py")
+    return load_tasks(tasks_dir)
 SANDBOX_PORT = re.compile(r"Uvicorn running on http://127\.0\.0\.1:(\d+)")
 IRIS_PORT = re.compile(r"Tomcat started on port (\d+)")
 IRIS_PROBE = "/api/agent/state?userId=regression-health&sessionId=regression-health"
@@ -144,6 +152,7 @@ def initialize_schema(args, schema: Path) -> None:
 class Case:
     index: int
     scenario: str
+    spec: TaskSpec | None = field(default=None, compare=False)   # 本用例的任务定义；未给出时按名字查根目录的任务
 
     @property
     def label(self) -> str:
@@ -154,28 +163,30 @@ def collect_case(case: Case, *, batch: Path, jar: Path, iris_env: dict, sandbox_
                  admin_token: str, seed: int, key: str, provenance: dict, processes: CaseProcesses) -> dict:
     started = utc_now()
     episode_id, mcp_token = token_hex(16), token_hex(24)
-    task = TASKS[case.scenario]
+    task = case.spec if case.spec is not None else TASKS[case.scenario]
     mode = "active" if task.script.interactions else "off"
-    case_env = dict(iris_env, MCD_MCP_URL=f"{sandbox_url}/mcp/{episode_id}/1", MCD_MCP_TOKEN=mcp_token)
     log = batch / f"{case.label}.log"
     result = {"index": case.index, "scenario": case.scenario, "episodeId": episode_id,
               "startedAt": started, "log": log.name}
     try:
-        with TemporaryDirectory(prefix="iris-regression-") as work, running(
-            ["java", "-Dfile.encoding=UTF-8", "-jar", str(jar), "--server.address=127.0.0.1",
-             "--server.port=0", "--spring.sql.init.mode=never", "--iris.memory.daily-note.cron=-"],
-            cwd=Path(work), env=case_env, log=log, processes=processes,
-        ) as iris:
-            iris_url = wait_ready(iris, log, IRIS_PORT, IRIS_PROBE)
-            evidence = run_case(task, iris_url=iris_url + "/api", sandbox_url=sandbox_url,
-                                admin_token=admin_token, mcp_token=mcp_token, episode_id=episode_id,
-                                seed=seed, monitor_mode=mode, key=key if mode == "active" else "")
-            evidence["provenance"].update(provenance)
-            save(batch / case.label, evidence)
-            result.update(evidence=f"{case.label}/evidence.json", summary=f"{case.label}/summary.json")
-            summary = summarize(evidence)
-            result.update({field: summary[field] for field in
-                           ("verdict", "status", "failedChecks", "errors", "diagnostics")})
+        with TemporaryDirectory(prefix="iris-regression-") as work:
+            # 用到的领域指向本局（微博先在工作目录写授权文件），没用到的领域显式禁用。
+            case_env = dict(iris_env, **iris_connection(task, sandbox_url, episode_id, mcp_token, Path(work)))
+            with running(
+                ["java", "-Dfile.encoding=UTF-8", "-jar", str(jar), "--server.address=127.0.0.1",
+                 "--server.port=0", "--spring.sql.init.mode=never", "--iris.memory.daily-note.cron=-"],
+                cwd=Path(work), env=case_env, log=log, processes=processes,
+            ) as iris:
+                iris_url = wait_ready(iris, log, IRIS_PORT, IRIS_PROBE)
+                evidence = run_case(task, iris_url=iris_url + "/api", sandbox_url=sandbox_url,
+                                    admin_token=admin_token, mcp_token=mcp_token, episode_id=episode_id,
+                                    seed=seed, monitor_mode=mode, key=key if mode == "active" else "")
+                evidence["provenance"].update(provenance)
+                save(batch / case.label, evidence)
+                result.update(evidence=f"{case.label}/evidence.json", summary=f"{case.label}/summary.json")
+                summary = summarize(evidence)
+                result.update({field: summary[field] for field in
+                               ("verdict", "status", "failedChecks", "errors", "diagnostics")})
     except KeyboardInterrupt:
         result.update(verdict="unavailable", status="interrupted")
     except Exception as error:
@@ -244,7 +255,8 @@ def run_suite(args, batch: Path, key: str) -> int:
                     SPRING_DATA_REDIS_DATABASE=str(args.redis_db), IRIS_AUTO_REVIEW="false",
                     IRIS_SKILLS_DIR=str(iris_root / "skills"),
                     SPRING_CONFIG_IMPORT=f"optional:{(iris_root / '.env').as_uri()}[.properties]")
-    cases = [Case(index, scenario) for index, scenario in enumerate(args.scenarios, 1)]
+    tasks = getattr(args, "tasks", None) or TASKS
+    cases = [Case(index, scenario, tasks[scenario]) for index, scenario in enumerate(args.scenarios, 1)]
     report = {"sandboxSource": source, "seed": args.seed, "jobs": args.jobs,
               "startedAt": utc_now(), "requestedScenarios": args.scenarios, "cases": [], "status": "running"}
     report_path = batch / "summary.json"
@@ -327,11 +339,16 @@ def main() -> int:
     parser.add_argument("--jobs", type=positive_int, default=1, help="maximum concurrent task executions (default: 1)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=Path, default=Path("runs/regression"))
+    parser.add_argument("--tasks-dir", type=Path, default=TASKS_DIR,
+                        help="task spec directory, for example tasks/20261124T0900 (default: tasks/)")
     args = parser.parse_args()
-    args.scenarios = args.scenarios or list(TASKS)
+    args.tasks = suite_tasks(args.tasks_dir)
+    if not args.tasks:
+        parser.error(f"no tasks found in {args.tasks_dir}")     # 与 runner.batch 一致：空任务集不能当作通过
+    args.scenarios = args.scenarios or list(args.tasks)
     for scenario in args.scenarios:
-        if scenario not in TASKS:
-            parser.error(f"unknown task {scenario!r}; choose from {', '.join(TASKS)}")
+        if scenario not in args.tasks:
+            parser.error(f"unknown task {scenario!r}; choose from {', '.join(args.tasks)}")
     if args.iris_repo is None or not all((args.iris_repo / name).is_file() for name in ("docs/schema.sql", "pom.xml")):
         parser.error("set --iris-repo or IRIS_REGRESSION_REPO to an Iris checkout")
     if not shutil.which("java") or not shutil.which("mvn"):
@@ -343,7 +360,7 @@ def main() -> int:
     if not re.fullmatch(r"[A-Za-z0-9_]+", args.database):
         parser.error("--database must contain only letters, digits, or underscores")
     key = api_key()
-    if any(TASKS[case].script.interactions for case in args.scenarios) and not key:
+    if any(args.tasks[case].script.interactions for case in args.scenarios) and not key:
         parser.error("set MONITOR_DASHSCOPE_API_KEY or DASHSCOPE_API_KEY for the clarification scenarios")
     batch = (args.out / token_hex(16)).resolve()
     batch.parent.mkdir(parents=True, exist_ok=True)

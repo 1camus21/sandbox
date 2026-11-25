@@ -1,0 +1,18 @@
+taskId: s0-wb-comments
+version: 2
+capability: tool-contract
+env:
+  clock: "2026-11-10 12:00:00"
+  domains:
+    - {name: weibo, scene: daily, account: alice}
+faults: []
+script:
+  prompt: |
+    请委派给微博助手，先查看我自己发过的微博，找到爬梧桐山的那条，再告诉我它下面有哪些评论。
+    只查询，不要发布、转发、评论、点赞或删除任何内容。
+expect:
+  calls:
+    - {id: mine, tool: statuses_user_timeline_biz}
+    - {id: comments, tool: comments_show_biz, bind: {id: mine}}
+  reply: {fromCalls: [comments]}
+  checks: {all: [s0.wb.commentsTarget]}

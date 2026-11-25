@@ -10,14 +10,27 @@ import httpx
 from monitor import Recognizer
 from assertions.domains.mcd.matches import CallMatches
 from runner.clients import Iris, Sandbox, pending_approvals
-from runner.contract import (
-    CANARY_PROMPT, CANARY_TOOL, DEFAULT_QUOTE_ITEMS, ORDER_BUDGET_FEN, ORDER_TOOL, READ_TOOLS, RECOVERY_PROMPT,
-)
+from assertions.preflight import preflight_retained, probe_succeeded
+from runner.contract import DEFAULT_QUOTE_ITEMS, ORDER_BUDGET_FEN, ORDER_TOOL
+from runner.domains import get_domain, task_domains
 from runner.interactions import POLICY_VERSION, keyword_actions, observe
 from runner.tasks import TaskSpec, legacy_view
-from runner.verdict import judge, preflight_retained, recovery_evidence, reported_totals
+from runner.verdict import judge, recovery_evidence, reported_totals
 from sandbox.domains.mcd.world.pricing import PriceError, price_items
 from sandbox.episodes import SCHEMA_VERSION, utc_now
+
+
+def env_id(task: TaskSpec, seed: int) -> str:
+    """环境标识。没有 env.domains 的旧任务保持 scene:account:seed；
+    声明了领域的任务逐个写出 领域:世界:账户，用 + 连接，内联的世界或账户记为 inline。"""
+    if not task.env.domains:
+        return f"{task.env.scene}:{task.env.account}:{seed}"
+    parts = "+".join(
+        f"{entry.name}:{'inline' if entry.worldInline is not None else entry.scene}:"
+        f"{'inline' if entry.accountInline is not None else entry.account}"
+        for entry in task.env.domains
+    )
+    return f"{parts}:{seed}"
 
 
 def identity(run_id: str, role: str) -> dict:
@@ -70,6 +83,8 @@ def run_episode(task, iris: Iris, sandbox: Sandbox, *, seed: int | None = None,
     if monitor_mode != "off" and recognizer is None:
         raise ValueError("monitor mode requires an intent recognizer")
     task = _resolve_task(task)
+    domains = task_domains(task)
+    profiles = [get_domain(name) for name in domains]
     actions = [item.model_dump() for item in task.script.interactions]
     quote_items = task.script.quoteItems or DEFAULT_QUOTE_ITEMS
     budget_fen = task.script.budgetFen or ORDER_BUDGET_FEN
@@ -125,16 +140,18 @@ def run_episode(task, iris: Iris, sandbox: Sandbox, *, seed: int | None = None,
             raise RuntimeError("runner requires a fresh episode")
         canary = identity(episode_id, "preflight")
         evidence["preflight"]["identity"] = canary
-        evidence["preflight"]["prompt"] = CANARY_PROMPT
-        evidence["preflight"]["reply"] = iris.chat(canary, CANARY_PROMPT)
+        # 每个领域探测一次。首个领域沿用 prompt/reply 字段，其余领域记在 probes 里。
+        for index, profile in enumerate(profiles):
+            if index == 0:
+                evidence["preflight"]["prompt"] = profile.canary_prompt
+                evidence["preflight"]["reply"] = iris.chat(canary, profile.canary_prompt)
+            else:
+                probes = evidence["preflight"].setdefault("probes", [])
+                probes.append({"domain": profile.name, "prompt": profile.canary_prompt})
+                probes[-1]["reply"] = iris.chat(canary, profile.canary_prompt)
         probe = sandbox.snapshot(episode_id, generation=generation)
         calls = probe["calls"]
-        verified = (
-            any(call["request"]["tool"] == CANARY_TOOL and call["business"]["success"] is True
-                and call["transport"]["state"] == "emitted" and call["transport"]["httpStatus"] == 200 for call in calls)
-            and all(call["request"]["tool"] in READ_TOOLS for call in calls)
-            and not pending_approvals(iris.state(canary))
-        )
+        verified = probe_succeeded(calls, domains) and not pending_approvals(iris.state(canary))
         evidence["preflight"].update(verified=verified, generation=generation,
                                      requestIds=[call["requestId"] for call in calls])
         if not verified:
@@ -222,7 +239,7 @@ def run_episode(task, iris: Iris, sandbox: Sandbox, *, seed: int | None = None,
             prompt = " ".join(action["reply"] for action in chosen)
         if task.faults and any(decision["approved"] for decision in evidence["approvals"]):
             sandbox.set_round(episode_id, round_number + 1, generation=generation)
-            chat(scenario_user, RECOVERY_PROMPT, round_number + 1, recovery=True)
+            chat(scenario_user, profiles[0].recovery_prompt, round_number + 1, recovery=True)
             if pending_approvals(iris.state(scenario_user)):
                 evidence["recoveryRequestedApproval"] = True
     except KeyboardInterrupt:
@@ -258,7 +275,7 @@ def run_episode(task, iris: Iris, sandbox: Sandbox, *, seed: int | None = None,
     if evidence["errors"].keys() - {"iris.trace"} and evidence["status"] == "complete":
         evidence["status"] = "capture_error"
     snapshot = evidence["sandbox"]
-    if evidence["preflight"].get("verified") and not preflight_retained(evidence):
+    if evidence["preflight"].get("verified") and not preflight_retained(evidence, domains):
         if evidence["status"] == "complete":
             evidence["status"] = "capture_error"
         evidence["errors"]["sandbox.preflight"] = "verified probe is missing from the closed episode generation"
@@ -268,7 +285,7 @@ def run_episode(task, iris: Iris, sandbox: Sandbox, *, seed: int | None = None,
         "taskId": task.taskId,
         "specVersion": task.version,
         "specSha256": task.digest(),
-        "envId": f"{task.env.scene}:{task.env.account}:{effective_seed}",
+        "envId": env_id(task, effective_seed),
         "irisTrace": {
             "events": len(trace),
             "possibleEventLimit": len(trace) >= 500,
@@ -280,8 +297,10 @@ def run_episode(task, iris: Iris, sandbox: Sandbox, *, seed: int | None = None,
     }
     approved_store = next((str(row["arguments"].get("storeCode")) for row in evidence["approvals"]
                            if row["approved"]), None)
+    # 报价是麦乐送的概念；不涉及麦乐送的任务（例如只声明检查包的微博题）不计算。
     quote = (last_quote(snapshot, quote_items, min_round=min_quote_round, store_code=approved_store)
-             if snapshot and evidence["status"] == "complete" and task.expect.calls is None else None)
+             if snapshot and evidence["status"] == "complete" and task.expect.calls is None
+             and "mcd" in domains else None)
     if task.faults and snapshot:
         evidence["recovery"] = recovery_evidence(evidence)
     evidence["verdict"] = judge(evidence, quote, task)

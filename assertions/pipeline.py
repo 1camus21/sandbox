@@ -3,21 +3,22 @@ from __future__ import annotations
 
 from assertions import compose, registry
 from assertions.context import build_context
-from assertions.domains.mcd.checks import preflight_retained
+from assertions.preflight import preflight_retained
+from runner.domains import task_domains
 
 UNAVAILABLE = {"status": "unavailable", "checks": {}}
 
 
-def preconditions_ok(evidence: dict) -> bool:
+def preconditions_ok(evidence: dict, domains=("mcd",)) -> bool:
     return (evidence.get("status") == "complete"
             and bool((evidence.get("preflight") or {}).get("verified"))
             and bool(evidence.get("sandbox"))
             and "state" in (evidence.get("iris") or {})
-            and preflight_retained(evidence))
+            and preflight_retained(evidence, domains))
 
 
 def judge(evidence: dict, quote: dict | None, spec) -> dict:
-    if not preconditions_ok(evidence):
+    if not preconditions_ok(evidence, task_domains(spec)):
         return dict(UNAVAILABLE)
     ctx = build_context(evidence, quote, spec)
     try:

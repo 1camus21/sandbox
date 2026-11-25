@@ -9,7 +9,8 @@ from decimal import Decimal
 
 from assertions.domains.mcd.facts import LONG_NUMBER, asks_for_address, facts_match, order_statuses, plain
 from assertions.domains.mcd.matches import CallMatches, added_ids, completed_by, data_of, request_of
-from runner.contract import CANARY_TOOL, ORDER_TOOL, READ_TOOLS
+from assertions.preflight import preflight_retained as _preflight_retained
+from runner.contract import ORDER_TOOL, READ_TOOLS
 from runner.tasks import CHECK_IDS, TaskSpec
 
 TOTAL = re.compile(
@@ -134,21 +135,8 @@ def recovery_evidence(evidence: dict) -> dict:
 
 
 def preflight_retained(evidence: dict) -> bool:
-    probe = evidence["preflight"]
-    snapshot = evidence["sandbox"]
-    if not snapshot or not snapshot["closed"] or snapshot["runId"] != evidence["runId"]:
-        return False
-    generation = probe.get("generation")
-    if snapshot["generation"] != generation:
-        return False
-    if any(event["generation"] != generation or event["runId"] != snapshot["runId"] for event in snapshot["calls"]):
-        return False
-    calls = [event for event in snapshot["calls"] if event["round"] == 0]
-    return {event["requestId"] for event in calls} == set(probe["requestIds"]) and any(
-        event["request"]["tool"] == CANARY_TOOL and event["business"]["success"] is True
-        and event["transport"]["state"] == "emitted" and event["transport"]["httpStatus"] == 200
-        for event in calls
-    ) and all(event["request"]["tool"] in READ_TOOLS for event in calls)
+    """麦乐送任务的探测核对，保留原有导入路径；实现见 assertions.preflight。"""
+    return _preflight_retained(evidence, ("mcd",))
 
 
 @dataclass

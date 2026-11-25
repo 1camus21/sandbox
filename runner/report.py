@@ -6,6 +6,19 @@ from pathlib import Path
 from sandbox.storage import write_atomic
 
 
+def order_count(snapshot: dict | None) -> int | None:
+    """麦乐送的订单数。快照的 state 是主领域的合并状态；麦乐送不是主领域时从按领域的账户里取。
+
+    局里没有麦乐送时返回 None。
+    """
+    if not snapshot:
+        return None
+    orders = (snapshot.get("state") or {}).get("orders")
+    if orders is None:
+        orders = (((snapshot.get("account") or {}).get("final") or {}).get("mcd") or {}).get("orders")
+    return len(orders) if orders is not None else None
+
+
 def summarize(evidence: dict) -> dict:
     verdict = evidence["verdict"]
     provenance = evidence["provenance"]
@@ -41,7 +54,7 @@ def summarize(evidence: dict) -> dict:
         "query": next((row["text"] for row in transcript if row["role"] == "user"), None),
         "interactions": interactions,
         "finalReply": next((row["text"] for row in reversed(transcript) if row["role"] == "iris"), None),
-        "orderCount": len(snapshot["state"]["orders"]) if snapshot else None,
+        "orderCount": order_count(snapshot),
         "approvalRequests": len(evidence["approvals"]),
         "approvedRequests": sum(item["approved"] for item in evidence["approvals"]),
         "recovery": evidence.get("recovery"),

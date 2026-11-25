@@ -25,6 +25,7 @@ def resolve(name: str, declared: dict[str, int] | None = None) -> Check:
 def discover() -> None:
     """导入领域模块，触发注册。"""
     import assertions.domains.mcd  # noqa: F401
+    import assertions.domains.weibo  # noqa: F401
 
 
 def known() -> list[str]:

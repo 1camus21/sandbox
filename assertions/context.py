@@ -33,6 +33,13 @@ class CheckContext:
     def mix(self, domains: tuple[str, ...]) -> MixView:
         return MixView(self.calls, self.transcript, self.clock, domains)
 
+    def for_domain(self, name: str) -> "CheckContext":
+        """多领域任务中，单领域检查使用的本领域上下文。"""
+        from assertions.scope import scoped_evidence, scoped_spec, task_domain_names
+        primary = task_domain_names(self.spec)[0]
+        return build_context(scoped_evidence(self.evidence, name, primary), self.quote,
+                             scoped_spec(self.spec, name))
+
 
 @dataclass(frozen=True)
 class DomainView:
@@ -61,10 +68,21 @@ class DomainView:
 
 
 def build_context(evidence: dict, quote: dict | None, spec) -> CheckContext:
-    """从证据构造上下文；当前证据是单领域结构，统一归到 mcd 视图。"""
+    """从证据构造上下文。
+
+    mcd 沿用合并后的单领域状态，保持既有检查不变；其他领域取快照里按领域记录的世界和账户。
+    """
     sandbox = evidence.get("sandbox") or {}
     state = sandbox.get("state") or {}
     initial = sandbox.get("initialState") or {}
+    worlds, accounts, initials = {"mcd": state}, {"mcd": state}, {"mcd": initial}
+    account = sandbox.get("account") or {}
+    for name, world in (sandbox.get("world") or {}).items():
+        if name == "mcd":
+            continue
+        worlds[name] = world
+        accounts[name] = (account.get("final") or {}).get(name, {})
+        initials[name] = (account.get("initial") or {}).get(name, {})
     return CheckContext(
         spec=spec,
         evidence=evidence,
@@ -72,7 +90,7 @@ def build_context(evidence: dict, quote: dict | None, spec) -> CheckContext:
         clock=(state.get("clock") or {}).get("now"),
         calls=sandbox.get("calls") or [],
         transcript=evidence.get("transcript") or [],
-        worlds={"mcd": state},
-        accounts={"mcd": state},
-        initial={"mcd": initial},
+        worlds=worlds,
+        accounts=accounts,
+        initial=initials,
     )
