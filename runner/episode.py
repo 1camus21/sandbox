@@ -297,8 +297,10 @@ def run_episode(task, iris: Iris, sandbox: Sandbox, *, seed: int | None = None,
     }
     approved_store = next((str(row["arguments"].get("storeCode")) for row in evidence["approvals"]
                            if row["approved"]), None)
+    # 报价是麦乐送的概念；不涉及麦乐送的任务（例如只声明检查包的微博题）不计算。
     quote = (last_quote(snapshot, quote_items, min_round=min_quote_round, store_code=approved_store)
-             if snapshot and evidence["status"] == "complete" and task.expect.calls is None else None)
+             if snapshot and evidence["status"] == "complete" and task.expect.calls is None
+             and "mcd" in domains else None)
     if task.faults and snapshot:
         evidence["recovery"] = recovery_evidence(evidence)
     evidence["verdict"] = judge(evidence, quote, task)

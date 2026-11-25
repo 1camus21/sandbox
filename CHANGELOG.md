@@ -27,6 +27,7 @@
 
 ### Fixed
 
+- Reject an empty task set in regression runs, compute the McDelivery quote only for tasks that involve McDelivery, and include `SANDBOX_EPISODE_ID` in the `runner.connect` output.
 - Run single-domain checks, including each domain's default pack, on a view of their own domain in multi-domain tasks, so the result no longer depends on the order of `env.domains`.
 - Judge Weibo bindings only against results returned before the request, require an empty result to be reported as empty, and check the S0 search keyword and authors, the commented status, and the hot-word top three in order; `python -m runner` now loads a task set's own `checks.py`.
 - Disable every domain a task does not use when connecting Iris in regression runs and through `runner.connect`, so host settings cannot route a misdirected call to a real service.

@@ -7,6 +7,7 @@
 输出 {"env": {...}}。任务用到的领域指向本局：麦乐送给出 MCD_MCP_URL、MCD_MCP_TOKEN；
 微博把授权文件写进 workdir，给出 WEIBO_MCP_URL、WEIBO_CREDENTIALS_FILE。任务没用到的领域
 显式指向不存在的地址和凭据。任务涉及多个领域时使用按领域的端点。
+另外给出 SANDBOX_EPISODE_ID，调用方把同一份环境注入 Iris 和直接模式的 Runner 即可。
 """
 from __future__ import annotations
 
@@ -42,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"unknown task: {args.task}")
     task = tasks[args.task]
     env = connection_env(task, args.sandbox, args.episode_id, args.token, args.workdir.resolve())
+    env["SANDBOX_EPISODE_ID"] = args.episode_id     # 直接模式的 Runner 与 Iris 使用同一局号
     print(json.dumps({"domains": task_domains(task), "env": env}, ensure_ascii=False))
     return 0
 

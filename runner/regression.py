@@ -26,7 +26,7 @@ from runner.__main__ import run_case, save, source_revision
 from runner.domains import iris_connection
 from runner.report import save_report, summarize
 from assertions.load import load_checks
-from runner.tasks import TASKS_DIR, load_tasks
+from runner.tasks import TASKS_DIR, TaskSpec, load_tasks
 from sandbox.config import load_local_env
 from sandbox.episodes import utc_now
 
@@ -152,7 +152,7 @@ def initialize_schema(args, schema: Path) -> None:
 class Case:
     index: int
     scenario: str
-    spec: object = field(default=None, compare=False)   # 本用例的任务定义；未给出时按名字查根目录的任务
+    spec: TaskSpec | None = field(default=None, compare=False)   # 本用例的任务定义；未给出时按名字查根目录的任务
 
     @property
     def label(self) -> str:
@@ -343,6 +343,8 @@ def main() -> int:
                         help="task spec directory, for example tasks/20261124T0900 (default: tasks/)")
     args = parser.parse_args()
     args.tasks = suite_tasks(args.tasks_dir)
+    if not args.tasks:
+        parser.error(f"no tasks found in {args.tasks_dir}")     # 与 runner.batch 一致：空任务集不能当作通过
     args.scenarios = args.scenarios or list(args.tasks)
     for scenario in args.scenarios:
         if scenario not in args.tasks:

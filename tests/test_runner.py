@@ -150,9 +150,13 @@ def sandbox_client(client):
     return Sandbox(client, MCP_TOKEN)
 
 
-# 这里的 FakeIris 只会扮演麦乐送；声明了 env.domains 的任务（如微博）由各自领域的测试覆盖。
+def resolved_domains(scenario: dict) -> list[str]:
+    return [entry["name"] for entry in scenario.get("domains") or [{"name": "mcd"}]]
+
+
+# 这里的 FakeIris 只会扮演麦乐送；涉及其他领域的任务（如微博）由各自领域的测试覆盖。
 @pytest.mark.parametrize("name", [name for name, scenario in SCENARIOS.items()
-                                  if not scenario.get("interactions") and not scenario.get("domains")])
+                                  if not scenario.get("interactions") and resolved_domains(scenario) == ["mcd"]])
 def test_scripted_cases_and_evidence(client, sandbox_client, tmp_path, name):
     fake = FakeIris(client, name)
     with httpx.Client(base_url="http://iris/api", transport=httpx.MockTransport(fake.handle)) as iris_http:

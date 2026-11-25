@@ -167,6 +167,7 @@ def test_connect_prints_mcd_environment(tmp_path, capsys):
     assert out["domains"] == ["mcd"]
     assert (env["MCD_MCP_URL"], env["MCD_MCP_TOKEN"]) == (f"{SANDBOX}/mcp/{EPISODE}/1", TOKEN)
     assert env["WEIBO_MCP_URL"].startswith(DISABLED_URL)           # 没用到的微博被显式禁用
+    assert env["SANDBOX_EPISODE_ID"] == EPISODE                     # 直接模式的 Runner 与 Iris 同一局号
 
 
 def test_connect_writes_weibo_credentials(tmp_path, capsys):
@@ -243,3 +244,13 @@ def test_regression_case_environment_overrides_host_services(tmp_path, monkeypat
 def load_tasks_for(task_id, directory=None):
     from runner.tasks import TASKS_DIR, load_tasks
     return load_tasks(directory or TASKS_DIR)[task_id]
+
+
+
+def test_regression_rejects_an_empty_task_set(tmp_path, monkeypatch):
+    import sys
+    from runner import regression
+    monkeypatch.setattr(sys, "argv", ["runner.regression", "--tasks-dir", str(tmp_path)])
+    with pytest.raises(SystemExit) as error:
+        regression.main()
+    assert error.value.code == 2

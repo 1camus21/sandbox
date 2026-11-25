@@ -172,3 +172,18 @@ def test_two_domain_read_only_task_passes_in_either_order(client, sandbox_client
     verdict = evidence["verdict"]
     assert verdict["status"] == "passed", verdict
     assert verdict["checks"]["weibo.call.me"] is True and verdict["checks"]["weibo.reply.me"] is True
+
+
+
+def test_weibo_task_with_only_a_check_pack_saves_its_summary(client, sandbox_client, tmp_path):
+    """没写 expect.calls 的微博题不计算麦乐送报价，跑完能正常写出摘要。"""
+    task = TaskSpec.model_validate({
+        "taskId": "x-checks-only", "version": 2,
+        "env": {"clock": "2026-11-10 12:00:00", "domains": [{"name": "weibo", "scene": "daily", "account": "alice"}]},
+        "script": {"prompt": "请委派给微博助手，查一下我的微博账号叫什么。只查询。"},
+        "expect": {"checks": {"use": ["weibo.noUnexpectedWrites"]}},
+    })
+    evidence = run(client, sandbox_client, "s0-wb-me", task=task)
+    save(tmp_path / "run", evidence)
+    summary = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["status"] == "complete" and summary["verdict"] == "passed"
