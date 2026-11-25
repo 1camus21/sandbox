@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from assertions.primitives.calls import precedes, request_of, successful
 from assertions.types import Result
 from sandbox.domains.registry import manifest_for
 
@@ -14,6 +15,7 @@ WRITE_TOOLS = manifest_for(DOMAIN).write_tools
 HOT_TOOLS = frozenset({"search_hot_word_biz", "search_hot_word_cate_biz"})
 STATUS_TOOLS = frozenset({"search_statuses_limited", "statuses_user_timeline_biz", "statuses_mentions_biz"})
 SNIPPET = 8    # 用正文开头几个字作为可核对的事实
+EMPTY_WORDS = ("没有", "未找到", "没找到", "暂无", "无结果", "0 条", "0条", "零条")
 
 
 def scenario_calls(ctx) -> list[dict]:
@@ -31,12 +33,6 @@ def result_of(call: dict) -> dict:
     return envelope.get("result") or {}
 
 
-def succeeded(call: dict) -> bool:
-    transport = call.get("transport") or {}
-    return ((call.get("business") or {}).get("success") is True
-            and transport.get("state") == "emitted" and transport.get("httpStatus") == 200)
-
-
 def ids_in(value) -> set[str]:
     """返回值里所有 idstr，供绑定核对：后一步的 id、cid 必须来自前一步的返回。"""
     found: set[str] = set()
@@ -52,15 +48,33 @@ def ids_in(value) -> set[str]:
     return found
 
 
+def bound_to(value, ref_step, call: dict, calls: list[dict]) -> bool:
+    """value 必须出现在 ref_step 某次成功返回里，且那次返回在 call 发出前已经完成。
+
+    分页或重试时，下游请求之前的所有合格返回都可以作为来源。
+    """
+    if ref_step is None:
+        return False
+    sources = [source for source in calls
+               if (source.get("request") or {}).get("tool") == ref_step.tool
+               and successful(source) and precedes(source, call)]
+    return any(str(value) in ids_in(result_of(source)) for source in sources)
+
+
 def matches(ctx) -> dict[str, dict | None]:
-    """按顺序把期望的调用和实际调用一一对上，结果在一次判定里共用。"""
+    """把期望的调用和实际调用一一对上，结果在一次判定里共用。
+
+    没有依赖关系的步骤不限先后；有绑定的步骤，来源必须在它之前已经返回。
+    """
     cached = ctx.cache.get("weibo.matches")
     if cached is not None:
         return cached
     calls = scenario_calls(ctx)
+    expected = steps(ctx)
+    by_id = {step.id: step for step in expected}
     used: set[int] = set()
     bound: dict[str, dict | None] = {}
-    for step in steps(ctx):
+    for step in expected:
         bound[step.id] = None
         for index, call in enumerate(calls):
             request = call.get("request") or {}
@@ -69,10 +83,10 @@ def matches(ctx) -> dict[str, dict | None]:
             arguments = request.get("arguments") or {}
             if any(str(arguments.get(key)) != str(value) for key, value in step.args.items()):
                 continue
-            if any(bound.get(ref) is None or str(arguments.get(field)) not in ids_in(result_of(bound[ref]))
+            if any(not bound_to(arguments.get(field), by_id.get(ref), call, calls)
                    for field, ref in step.bind.items()):
                 continue
-            if step.outcome == "success" and not succeeded(call):
+            if step.outcome == "success" and not successful(call):
                 continue
             used.add(index)
             bound[step.id] = call
@@ -99,6 +113,14 @@ def facts(call: dict) -> list[str]:
     return [item for item in found if item]
 
 
+def says_empty(text: str) -> bool:
+    return any(word in text for word in EMPTY_WORDS)
+
+
+def arguments_of(call: dict) -> dict:
+    return request_of(call) or {}
+
+
 def replies(ctx) -> str:
     return "\n".join(row.get("text") or "" for row in ctx.transcript
                      if row.get("role") == "iris" and row.get("round", 0) >= 1)
@@ -122,15 +144,21 @@ def no_unexpected_writes(ctx) -> Result:
 
 
 def reply_grounded(ctx) -> Result:
-    """回复里至少出现一条来自对应调用返回的事实；返回为空时无从核对，不判失败。"""
+    """回复里至少出现一条来自对应调用返回的事实；返回为空时，回复必须如实说明没有结果。
+
+    只核对指向微博步骤的引用；其他领域的引用由各自领域的检查负责。
+    """
     text = replies(ctx)
     bound = matches(ctx)
     children: dict[str, bool] = {}
     for ref in ctx.spec.expect.reply.fromCalls:
-        call = bound.get(ref)
+        if ref not in bound:
+            continue
+        call = bound[ref]
         if call is None:
             children[f"weibo.reply.{ref}"] = False
             continue
         candidates = facts(call)
-        children[f"weibo.reply.{ref}"] = not candidates or any(item in text for item in candidates)
+        children[f"weibo.reply.{ref}"] = (any(item in text for item in candidates) if candidates
+                                         else says_empty(text))
     return Result(all(children.values()), children=children)

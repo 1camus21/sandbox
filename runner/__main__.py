@@ -16,6 +16,7 @@ from runner.clients import Iris, Sandbox
 from runner.domains import get_domain, task_domains
 from runner.episode import run_episode
 from runner.report import save_report, summarize
+from assertions.load import load_checks
 from runner.tasks import TASKS_DIR, TaskSpec, load_tasks
 from sandbox.config import load_local_env
 from sandbox.storage import write_atomic
@@ -75,6 +76,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.episode_id and (len(args.episode_id) != 32 or any(c not in "0123456789abcdef" for c in args.episode_id)):
         parser.error("--episode-id requires 32 lowercase hexadecimal characters")
+    load_checks(args.tasks_dir / "checks.py")   # 任务集自带的检查，与 runner.batch、回归一致
     tasks = load_tasks(args.tasks_dir)
     if args.task not in tasks:
         parser.error(f"unknown task: {args.task} (available: {', '.join(sorted(tasks))})")

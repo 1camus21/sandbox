@@ -14,3 +14,4 @@ expect:
   calls:
     - {id: hot, tool: search_hot_word_biz}
   reply: {fromCalls: [hot]}
+  checks: {all: [s0.wb.hotTop3]}

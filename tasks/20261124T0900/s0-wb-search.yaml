@@ -14,3 +14,4 @@ expect:
   calls:
     - {id: search, tool: search_statuses_limited}
   reply: {fromCalls: [search]}
+  checks: {all: [s0.wb.searchTopic]}

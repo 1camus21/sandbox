@@ -7,12 +7,14 @@ import json
 import httpx
 import pytest
 
+from assertions.load import load_checks
 from conftest import ADMIN, MCP_TOKEN, tool
 from runner.__main__ import save
 from runner.clients import Iris, Sandbox
 from runner.episode import run_episode
-from runner.tasks import load_all_tasks
+from runner.tasks import TASKS_DIR, load_all_tasks
 
+load_checks(TASKS_DIR / "20261124T0900" / "checks.py")    # 与 python -m runner --tasks-dir 一样加载任务集检查
 TASKS = {name: spec for name, spec in load_all_tasks().items() if name.startswith("s0-wb-")}
 
 
