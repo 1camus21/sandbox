@@ -75,9 +75,23 @@ def test_text_is_the_json_envelope():
 
 def test_clock_defaults_inside_the_window_and_times_carry_beijing_offset():
     ep = episode(clock=None)
-    assert ep.clock == "2026-11-10 09:00:00" and ep.clock_source == "window"
+    assert ep.clock == "2026-11-10 11:00:00" and ep.clock_source == "window"
     result, _ = call(ep, "statuses_update", status="现在几点")
-    assert result["result"]["created_at"] == "Tue Nov 10 09:00:00 +0800 2026"
+    assert result["result"]["created_at"] == "Tue Nov 10 11:00:00 +0800 2026"
+
+
+def test_seed_content_is_older_than_any_valid_clock():
+    """时钟必须落在环境窗口内；种子数据都早于窗口起点，任何合法时钟都看不到“未来”的微博。"""
+    from sandbox.domains.weibo.world import load_scene, parse_time
+    from sandbox.domains.weibo.world.accounts import list_accounts, load_account
+    world = load_scene("daily")
+    start = parse_time(world["window"]["from"])
+    rows = world["statuses"] + world["comments"]
+    for name in list_accounts():
+        account = load_account(name)
+        rows += account["statuses"] + account["mentions"] + account["comments"]
+    late = [row["idstr"] for row in rows if parse_time(row["created_at"]) > start]
+    assert late == []
 
 
 def test_clock_outside_the_window_is_rejected():
@@ -305,6 +319,14 @@ def test_status_deleted_changes_the_world_and_hides_the_status():
     assert call(ep, "search_statuses_limited", q="开源大模型")[0]["result"]["total_number"] == 0
 
 
+def test_persistent_status_deleted_keeps_failing_and_records_every_call():
+    ep = episode(Fault(type="STATUS_DELETED", tool="comments_create", nth=1, persist=True, target=OTHERS_POST))
+    for attempt in range(2):
+        result, _ = call(ep, "comments_create", id=OTHERS_POST, comment=f"第 {attempt + 1} 次")
+        assert result["error"]["error_code"] == 20101
+    assert ep.seq == 2
+
+
 def test_content_rejected_once():
     ep = episode(Fault(type="CONTENT_REJECTED", tool="statuses_update", nth=1))
     first, event = call(ep, "statuses_update", status="第一次")
@@ -375,3 +397,21 @@ def test_manifest_matches_the_tool_definitions():
     manifest = manifest_for("weibo")
     assert manifest.tools == {tool["name"] for tool in DOMAIN.tools}
     assert manifest.read_tools == READ_TOOLS
+
+
+
+def test_new_ids_skip_ids_taken_by_inline_data():
+    from sandbox.domains.weibo.world.accounts import load_account
+    account = load_account("alice")
+    account["statuses"].append({"idstr": "5200000000100001", "uid": "2001", "text": "内联里已经有的一条",
+                                "created_at": "2026-11-10T08:00:00+08:00", "reposts_count": 0,
+                                "comments_count": 0, "attitudes_count": 0})
+    account["myComments"] = [{"idstr": "4900000000100002", "status_id": OTHERS_POST, "uid": "2001",
+                              "created_at": "2026-11-10T08:00:00+08:00", "text": "内联里已经有的评论"}]
+    ep = episode(account_inline=account)
+    posted = call(ep, "statuses_update", status="新发的一条")[0]["result"]["idstr"]
+    commented = call(ep, "comments_create", id=OTHERS_POST, comment="新的评论")[0]["result"]["idstr"]
+    assert posted != "5200000000100001" and commented != "4900000000100002"
+    assert call(ep, "statuses_user_timeline_biz")[0]["result"]["total_number"] == 4
+    state = DOMAIN.account_state(ep.accounts["weibo"])
+    assert len(state["myStatuses"]) == 4 and len(state["myComments"]) == 2

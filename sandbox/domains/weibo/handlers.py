@@ -154,9 +154,23 @@ def _now(world: dict, account: dict) -> str:
     return (parse_time(world["clock"]) + timedelta(seconds=account["writeSeq"])).isoformat()
 
 
-def _next_id(account: dict, base: int) -> str:
+def _next_id(account: dict, base: int, taken: set[str]) -> str:
+    """按写操作序号分配编号；内联数据可能已经占用了某个编号，遇到就顺延。"""
     account["writeSeq"] += 1
-    return str(base + account["writeSeq"])
+    candidate = base + account["writeSeq"]
+    while str(candidate) in taken:
+        candidate += 1
+    return str(candidate)
+
+
+def _status_ids(view: "View") -> set[str]:
+    rows = view.world["statuses"] + view.account["statuses"] + view.account["mentions"]
+    return {row["idstr"] for row in rows}
+
+
+def _comment_ids(view: "View") -> set[str]:
+    rows = view.world["comments"] + view.account["comments"] + view.account["myComments"]
+    return {row["idstr"] for row in rows}
 
 
 # ---------- 渲染 ----------
@@ -278,7 +292,7 @@ def comments_show(view: View, args: dict) -> dict:
 
 def _new_status(view: View, text: str, retweeted_id: str | None) -> dict:
     created = _now(view.world, view.account)
-    status = {"idstr": _next_id(view.account, STATUS_ID_BASE), "uid": view.me, "created_at": created,
+    status = {"idstr": _next_id(view.account, STATUS_ID_BASE, _status_ids(view)), "uid": view.me, "created_at": created,
               "text": text, "reposts_count": 0, "comments_count": 0, "attitudes_count": 0,
               "featured": False, "deleted": False, "retweeted_id": retweeted_id, "created": True}
     view.account["statuses"].append(status)
@@ -309,7 +323,7 @@ def destroy(view: View, args: dict) -> dict:
 
 def _add_comment(view: View, status: dict, text: str, reply_to: str | None) -> dict:
     created = _now(view.world, view.account)
-    comment = {"idstr": _next_id(view.account, COMMENT_ID_BASE), "status_id": status["idstr"],
+    comment = {"idstr": _next_id(view.account, COMMENT_ID_BASE, _comment_ids(view)), "status_id": status["idstr"],
                "uid": view.me, "created_at": created, "text": text, "reply_to": reply_to}
     view.account["myComments"].append(comment)
     return render_comment(view, comment)

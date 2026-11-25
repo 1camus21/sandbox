@@ -89,8 +89,10 @@ class Weibo:
         elif kind == "CONTENT_REJECTED":
             world["flags"]["contentRejected"] = lasting
         elif kind == "STATUS_DELETED":
+            # 目标只能是环境里的公开微博。用户不能删除别人的微博，所以已删除只可能来自本故障：
+            # 持续生效（persist）的故障每次调用都会重新应用，保持已删除即可。
             status = next((row for row in world["statuses"] if row["idstr"] == fault.target), None)
-            if status is None or status["deleted"]:
+            if status is None:
                 raise ValueError(f"unknown target for STATUS_DELETED: {fault.target!r}")
             status["deleted"] = True
         else:

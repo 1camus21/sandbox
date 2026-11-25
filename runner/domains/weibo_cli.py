@@ -47,21 +47,26 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("set --credentials or WEIBO_CREDENTIALS_FILE")
 
     episode_id, token = token_hex(16), token_hex(24)
-    path = write_credentials(Path(args.credentials), token, args.sandbox)
+    # 先校验、先开局，成功后才替换授权文件：任何一步失败，原有的授权文件都保持不变。
     if args.open:
         admin_token = os.environ.get("SANDBOX_ADMIN_TOKEN")
         if not admin_token:
             parser.error("--open requires SANDBOX_ADMIN_TOKEN")
+        try:
+            faults = [json.loads(item) for item in args.fault]
+        except ValueError as error:
+            parser.error(f"--fault must be JSON: {error}")
         body = {"episodeId": episode_id, "token": token, "seed": args.seed,
                 "domains": [{"name": "weibo", "scene": args.scene, "account": args.account}],
-                "faults": [json.loads(item) for item in args.fault]}
+                "faults": faults}
         if args.clock:
             body["clock"] = args.clock
         try:
             open_episode(args.sandbox, admin_token, body)
         except (urllib.error.URLError, OSError) as error:
-            print(f"开局失败：{error}", file=sys.stderr)
+            print(f"开局失败，授权文件未改动：{error}", file=sys.stderr)
             return 1
+    path = write_credentials(Path(args.credentials), token, args.sandbox)    # 原子替换
 
     print(f"授权文件已写入：{path}")
     print("\n1. Iris 的 .env（只需设置一次；沙箱按令牌找到这一局）：")

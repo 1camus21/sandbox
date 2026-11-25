@@ -247,6 +247,31 @@ def load_tasks_for(task_id, directory=None):
 
 
 
+# ---- 手动准备命令：失败时保留原授权文件 ----
+
+def test_prepare_keeps_credentials_when_admin_token_is_missing(tmp_path, monkeypatch):
+    path = write_credentials(tmp_path / "auth.json", TOKEN, SANDBOX)
+    before = path.read_text(encoding="utf-8")
+    monkeypatch.delenv("SANDBOX_ADMIN_TOKEN", raising=False)
+    with pytest.raises(SystemExit):
+        weibo_cli.main(["--credentials", str(path), "--open"])
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_prepare_keeps_credentials_when_opening_fails(tmp_path, monkeypatch):
+    import urllib.error
+    path = write_credentials(tmp_path / "auth.json", TOKEN, SANDBOX)
+    before = path.read_text(encoding="utf-8")
+    monkeypatch.setenv("SANDBOX_ADMIN_TOKEN", "admin")
+
+    def refuse(*args, **kwargs):
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(weibo_cli, "open_episode", refuse)
+    assert weibo_cli.main(["--credentials", str(path), "--open"]) == 1
+    assert path.read_text(encoding="utf-8") == before
+
+
 def test_regression_rejects_an_empty_task_set(tmp_path, monkeypatch):
     import sys
     from runner import regression
